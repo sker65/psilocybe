@@ -19,7 +19,7 @@
 #define MATRIX_WIDTH 32
 #define MATRIX_HEIGHT 32
 
-#define MAX_DIMENSION ((MATRIX_WIDTH > MATRIX_HEIGHT) ? MATRIX_WIDTH : MATRIX_HEIGHT)
+#define MAX_DIMENSION ( ( MATRIX_WIDTH > MATRIX_HEIGHT ) ? MATRIX_WIDTH : MATRIX_HEIGHT )
 
 // The 16 bit version of our coordinates
 uint16_t noisex;
@@ -46,16 +46,14 @@ CRGBPalette16 blackAndWhiteStripedPalette;
 // using code.  Since the palette is effectively an array of
 // sixteen CRGB colors, the various fill_* functions can be used
 // to set them up.
-void SetupBlackAndWhiteStripedPalette()
-{
-  // 'black out' all 16 palette entries...
-  fill_solid( blackAndWhiteStripedPalette, 16, CRGB::Black);
-  // and set every fourth one to white.
-  blackAndWhiteStripedPalette[0] = CRGB::White;
-  blackAndWhiteStripedPalette[4] = CRGB::White;
-  blackAndWhiteStripedPalette[8] = CRGB::White;
-  blackAndWhiteStripedPalette[12] = CRGB::White;
-
+void SetupBlackAndWhiteStripedPalette() {
+	// 'black out' all 16 palette entries...
+	fill_solid( blackAndWhiteStripedPalette, 16, CRGB::Black );
+	// and set every fourth one to white.
+	blackAndWhiteStripedPalette[0] = CRGB::White;
+	blackAndWhiteStripedPalette[4] = CRGB::White;
+	blackAndWhiteStripedPalette[8] = CRGB::White;
+	blackAndWhiteStripedPalette[12] = CRGB::White;
 }
 
 CRGBPalette16 blackAndBlueStripedPalette;
@@ -64,14 +62,13 @@ CRGBPalette16 blackAndBlueStripedPalette;
 // using code.  Since the palette is effectively an array of
 // sixteen CRGB colors, the various fill_* functions can be used
 // to set them up.
-void SetupBlackAndBlueStripedPalette()
-{
-  // 'black out' all 16 palette entries...
-  fill_solid( blackAndBlueStripedPalette, 16, CRGB::Black);
+void SetupBlackAndBlueStripedPalette() {
+	// 'black out' all 16 palette entries...
+	fill_solid( blackAndBlueStripedPalette, 16, CRGB::Black );
 
-  for (uint8_t i = 0; i < 6; i++) {
-    blackAndBlueStripedPalette[i] = CRGB::Blue;
-  }
+	for( uint8_t i = 0; i < 6; i++ ) {
+		blackAndBlueStripedPalette[i] = CRGB::Blue;
+	}
 }
 
 // There are several different palettes of colors demonstrated here.
@@ -82,119 +79,122 @@ void SetupBlackAndBlueStripedPalette()
 // Additionally, you can manually define your own color palettes, or you can write
 // code that creates color palettes on the fly.
 
-void drawNoise(CRGBPalette16 palette)
-{
-  EVERY_N_MILLISECONDS(8) {
-    for (uint8_t i = 0; i < NUM_LEDS; i++) {
-      uint8_t x = coordsX[i];
-      uint8_t y = coordsY[i];
+unsigned long noiseTimer = 0;
 
-      int xoffset = noisescale * x;
-      int yoffset = noisescale * y;
+void drawNoise( CRGBPalette16 palette ) {
+	unsigned long now = millis();
+	if( now > noiseTimer ) {
+		noiseTimer = now + ( ( 256 - speed ) >> 5 );
+		for( uint8_t i = 0; i < NUM_LEDS; i++ ) {
+			uint8_t x = coordsX[i];
+			uint8_t y = coordsY[i];
 
-      uint8_t data = inoise8(x + xoffset + noisex, y + yoffset + noisey, noisez);
+			int xoffset = noisescale * x;
+			int yoffset = noisescale * y;
 
-      // The range of the inoise8 function is roughly 16-238.
-      // These two operations expand those values out to roughly 0..255
-      // You can comment them out if you want the raw noise data.
-      data = qsub8(data, 16);
-      data = qadd8(data, scale8(data, 39));
+			uint8_t data = inoise8( x + xoffset + noisex, y + yoffset + noisey, noisez );
 
-      leds[i] = ColorFromPalette(palette, data, 255, LINEARBLEND);
-    }
+			// The range of the inoise8 function is roughly 16-238.
+			// These two operations expand those values out to roughly 0..255
+			// You can comment them out if you want the raw noise data.
+			data = qsub8( data, 16 );
+			data = qadd8( data, scale8( data, 39 ) );
 
-    noisex += noisespeedx;
-    noisey += noisespeedy;
-    noisez += noisespeedz;
-  }
+			leds[i] = ColorFromPalette( palette, data, 255, LINEARBLEND );
+		}
+
+		noisex += noisespeedx;
+		noisey += noisespeedy;
+		noisez += noisespeedz;
+	}
 }
 
 void rainbowNoise() {
-  noisespeedx = 0;
-  noisespeedy = 2;
-  noisespeedz = 0;
-  noisescale = 0;
-  drawNoise(RainbowColors_p);
+	noisespeedx = 0;
+	noisespeedy = 2;
+	noisespeedz = 0;
+	noisescale = 0;
+	drawNoise( RainbowColors_p );
 }
 
 void rainbowStripeNoise() {
-  noisespeedx = 0;
-  noisespeedy = 2;
-  noisespeedz = 0;
-  noisescale = 0;
-  drawNoise(RainbowStripeColors_p);
+	noisespeedx = 0;
+	noisespeedy = 2;
+	noisespeedz = 0;
+	noisescale = 0;
+	drawNoise( RainbowStripeColors_p );
 }
 
 void partyNoise() {
-  noisespeedx = 9;
-  noisespeedy = 0;
-  noisespeedz = 0;
-  noisescale = 1;
-  drawNoise(PartyColors_p);
+	noisespeedx = 9;
+	noisespeedy = 0;
+	noisespeedz = 0;
+	noisescale = 1;
+	drawNoise( PartyColors_p );
 }
 
 void forestNoise() {
-  noisespeedx = 9;
-  noisespeedy = 0;
-  noisespeedz = 0;
-  noisescale = 1;
-  drawNoise(ForestColors_p);
+	noisespeedx = 9;
+	noisespeedy = 0;
+	noisespeedz = 0;
+	noisescale = 1;
+	drawNoise( ForestColors_p );
 }
 
 void cloudNoise() {
-  noisespeedx = 2;
-  noisespeedy = 0;
-  noisespeedz = 0;
-  noisescale = 0;
-  drawNoise(CloudColors_p);
+	noisespeedx = 2;
+	noisespeedy = 0;
+	noisespeedz = 0;
+	noisescale = 0;
+	drawNoise( CloudColors_p );
 }
 
 void fireNoise() {
-  noisespeedx = 0; // 24;
-  noisespeedy = 64;
-  noisespeedz = 0;
-  noisescale = 4;
-  drawNoise(HeatColors_p);
+	noisespeedx = 0; // 24;
+	noisespeedy = 64;
+	noisespeedz = 0;
+	noisescale = 4;
+	drawNoise( HeatColors_p );
 }
 
 void fireNoise2() {
-  noisespeedx = 0;
-  noisespeedy = 8;
-  noisespeedz = 4;
-  noisescale = 1;
-  drawNoise(HeatColors_p);
+	noisespeedx = 0;
+	noisespeedy = 8;
+	noisespeedz = 4;
+	noisescale = 1;
+	drawNoise( HeatColors_p );
 }
 
 void lavaNoise() {
-  noisespeedx = 0;
-  noisespeedy = -1;
-  noisespeedz = 2;
-  noisescale = 0;
-  drawNoise(LavaColors_p);
+	noisespeedx = 0;
+	noisespeedy = -1;
+	noisespeedz = 2;
+	noisescale = 0;
+	drawNoise( LavaColors_p );
 }
 
 void oceanNoise() {
-  noisespeedx = 0;
-  noisespeedy = 0;
-  noisespeedz = 2;
-  noisescale = 0;
-  drawNoise(OceanColors_p);
+	noisespeedx = 0;
+	noisespeedy = 0;
+	noisespeedz = 2;
+	noisescale = 0;
+	drawNoise( OceanColors_p );
 }
 
 void blackAndWhiteNoise() {
-  SetupBlackAndWhiteStripedPalette();
-  noisespeedx = 12;
-  noisespeedy = 0;
-  noisespeedz = 0;
-  noisescale = 0;
-  drawNoise(blackAndWhiteStripedPalette);
+	SetupBlackAndWhiteStripedPalette();
+	noisespeedx = 12;
+	noisespeedy = 0;
+	noisespeedz = 0;
+	noisescale = 0;
+	drawNoise( blackAndWhiteStripedPalette );
 }
 
 void blackAndBlueNoise() {
-  SetupBlackAndBlueStripedPalette();
-  noisespeedx = 0;
-  noisespeedy = -8;
-  noisespeedz = 0;
-  noisescale = 1;
-  drawNoise(blackAndBlueStripedPalette);
+	SetupBlackAndBlueStripedPalette();
+	noisespeedx = 0;
+	noisespeedy = -8;
+	noisespeedz = 0;
+	noisescale = 1;
+	drawNoise( blackAndBlueStripedPalette );
 }
