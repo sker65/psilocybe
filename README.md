@@ -26,6 +26,11 @@ Firmware is a fork of Jasons initial version https://github.com/evilgeniuslabs/p
 - OTA for easier firmware updates
 - speed control for almost all effects
 
+WEB UI
+------
+The embedded webserver presents a nice UI to control the lamp. The UI is updated in realtime even if you control the device via mqtt.
+<img src="./images/ui.jpg">
+
 MQTT 
 ------------
 This is an example how the Psilocybe can be configured as a home assistant mqtt light device:
