@@ -10,11 +10,12 @@ Building the lamp see https://www.evilgeniuslabs.org/psilocybe it uses 241 addre
 
 To control the data line of the led rings it is recommended to use a level shifter or a driver e.g. HCT 245.
 
-To make it nice looking the led rings should be behind a diffusor. Easiest and nice way to do this, is to reuse a regular lamp like this.
+<img src="./images/lamp.jpg" width="200" align="right">To make it nice looking the led rings should be behind a diffusor. Easiest and nice way to do this, is to reuse a regular lamp like this 
+https://toom.de/p/deckenleuchte-weisssatiniert-mars/9832229 
 
 This how it looks (Jasons video): https://youtu.be/mms5l1I2q0M
 
-<img src="./psilo.jpg"> image courtesy of jason
+<img src="./images/psilo.jpg"> image courtesy of jason
 
 Firmware
 --------
