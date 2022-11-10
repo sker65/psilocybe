@@ -1,4 +1,4 @@
-Psilocbye Lamp
+Psilocybe Lamp
 =========
 
 Control an addressable LED strip with an ESP8266 via a web browser for a Psilocbye lamp see https://www.evilgeniuslabs.org/psilocybe
