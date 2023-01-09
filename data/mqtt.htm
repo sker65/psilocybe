@@ -35,36 +35,46 @@
       <div class="collapse navbar-collapse" id="navbar-collapse-1">
         <ul class="nav navbar-nav">
           <li><a href="/">Mothership <span class="sr-only">(current)</span></a></li>
-          <li class="active"><a href="/simple.htm" title="Simple Mode">Simple</a></li>
+          <li><a href="/simple.htm" title="Simple Mode">Simple</a></li>
           <li><a href="/edit.htm" title="Edit Files">Files</a></li>
           <li><a href="/update" title="Update Firmware">Firmware</a></li>
-          <li><a href="/mqtt.htm" title="Config MQTT">Config MQTT</a></li>
+          <li class="active"><a href="/mqtt.htm" title="Config MQTT">Config MQTT</a></li>
         </ul>
       </div>
     </div>
   </nav>
 
-
   <div id="container" class="container">
+    <h2>MQTT Configuration</h2>
 
-    <div style="margin: 5px;">
-      <button type="button" class="btn btn-default" id="btnOn">On</button>
-      <button type="button" class="btn btn-default" id="btnOff">Off</button>
+    <form>
+      <div class="form-group">
+        <label for="mqttServer">Server</label>
+        <input type="string" class="form-control" id="mqttServer" aria-describedby="serverHelp"
+          placeholder="Enter servername">
+        <small id="serverHelp" class="form-text text-muted">Enter mqtt server name w/o port. Port will always be
+          1883.</small>
+      </div>
+      <div class="form-group">
+        <label for="topicPrefix">Topic Prefix</label>
+        <input type="string" class="form-control" id="topicPrefix" aria-describedby="prefixHelp"
+          placeholder="Topic Prefix">
+        <small id="prefixHelp" class="form-text text-muted">Topic prefix lets you configure more than one device, each
+          with a different mqttt topic. Prefix must end with '/' and will be added with 'cmd' or 'state' for reporting
+          state or receiving cmds.</small>
+      </div>
+
+      <button id="mqttSave" type="button" class="btn btn-primary">Save</button>
+    </form>
+
+    <button type="button" class="btn btn-primary" id="myBtn">Show Toast</button>
+
+    <div id="success" style="display: none;" class="alert alert-success">
+      <strong>Success!</strong> Saved your changes successfully.
     </div>
 
-    <div id="patternGrid" class="grid-pattern"></div>
-
-    <div id="colorButtonsRow" class="grid-color"></div>
-
   </div>
 
-  <div id="templates" style="display: none">
-
-    <div id="colorButtonTemplate" class="grid-item-color"></div>
-
-    <button id="patternButtonTemplate" class="grid-item-pattern btn btn-default"></button>
-
-  </div>
 
   <!-- request js from internet CDN -->
   <script src="https://code.jquery.com/jquery-3.1.1.min.js"
@@ -80,7 +90,20 @@
   <!-- <script src="js/jquery-3.1.1.min.js"></script> -->
   <!-- <script src="js/bootstrap.min.js"></script> -->
 
-  <script src="js/simple.js"></script>
+  <!-- script src="js/simple.js"></script -->
+  <script type="application/javascript">
+    $(document).ready(function () {
+      // 1. load current config from server
+
+      // 2. let save button post values to server, if changed
+      $('#myBtn').click(() => {
+        $('#success').fadeIn();
+        setTimeout(() => {
+          $('#success').fadeOut();
+        }, 2000);
+      });
+    });
+  </script>
 
 </body>
 

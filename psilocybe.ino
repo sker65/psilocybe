@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-//#define FASTLED_ALLOW_INTERRUPTS 0
+// #define FASTLED_ALLOW_INTERRUPTS 0
 #define FASTLED_INTERRUPT_RETRY_COUNT 0
 #include <FastLED.h>
 FASTLED_USING_NAMESPACE
@@ -63,15 +63,15 @@ ESP8266HTTPUpdateServer httpUpdateServer;
 
 #include "FSBrowser.h"
 
-#define DATA_PIN D5
+#define DATA_PIN D4 // was D5
 #define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
-#define NUM_LEDS 241
+#define NUM_LEDS 241 // 73 was 241
 
 #define MILLI_AMPS 4000 // IMPORTANT: set the max milli-Amps of your power supply (4A = 4000mA)
 
 // unused
-//#define FRAMES_PER_SECOND \ 	120 // here you can control the speed. With the Access Point / Web Server the animations
+// #define FRAMES_PER_SECOND \ 	120 // here you can control the speed. With the Access Point / Web Server the animations
 // run a bit slower.
 
 CRGB leds[NUM_LEDS];
@@ -270,6 +270,8 @@ const uint8_t patternCount = ARRAY_SIZE( patterns );
 
 #define MQTT_STATE_TOPIC "psilocybe/psilo1/state"
 
+// define a mqtt prefix
+
 int hexDigitToInt( char c ) {
 	if( c >= '0' && c <= '9' ) {
 		return c - '0';
@@ -333,8 +335,10 @@ void mqtt_reconnect() {
 		if( mqtt_client.connect( clientId.c_str() ) ) {
 			Serial.println( "connected" );
 			// Once connected, publish an announcement...
+			// TODO use configured prefix
 			mqtt_client.publish( "psilocybe/psilo1/info", "foo", 3 );
 			// ... and resubscribe
+			// TODO use configured prefix
 			mqtt_client.subscribe( "psilocybe/psilo1/cmd/#" );
 		} else {
 			Serial.print( "failed, rc=" );
@@ -574,6 +578,11 @@ void setup() {
 		sendInt( currentPaletteIndex );
 	} );
 
+	webServer.on( "/mqttServer", HTTP_POST, []() {
+		String value = webServer.arg( "value" );
+		setMqttServer( value );
+	} );
+
 	webServer.on( "/brightness", HTTP_POST, []() {
 		String value = webServer.arg( "value" );
 		setBrightness( value.toInt() );
@@ -652,7 +661,6 @@ void setSpeed( uint8_t value ) {
 }
 
 void loop() {
-
 	ArduinoOTA.handle();
 
 	// do not continue if OTA update is in progress
@@ -803,6 +811,7 @@ void publish_state() {
 		Serial.println( "MQT msg: " + json + "len: " + l );
 		byte buf[l + 3];
 		json.getBytes( buf, l + 1 );
+		// TODO use configured prefix
 		mqtt_client.publish( MQTT_STATE_TOPIC, buf, l );
 	}
 }
@@ -810,7 +819,7 @@ void publish_state() {
 void setPower( uint8_t value ) {
 	power = value == 0 ? 0 : 1;
 
-	EEPROM.write( 5, power );
+	EEPROM.update( 5, power );
 	EEPROM.commit();
 
 	broadcastInt( "power", power );
@@ -820,7 +829,7 @@ void setPower( uint8_t value ) {
 void setAutoplay( uint8_t value ) {
 	autoplay = value == 0 ? 0 : 1;
 
-	EEPROM.write( 6, autoplay );
+	EEPROM.update( 6, autoplay );
 	EEPROM.commit();
 
 	broadcastInt( "autoplay", autoplay );
@@ -830,7 +839,7 @@ void setAutoplay( uint8_t value ) {
 void setAutoplayDuration( uint8_t value ) {
 	autoplayDuration = value;
 
-	EEPROM.write( 7, autoplayDuration );
+	EEPROM.update( 7, autoplayDuration );
 	EEPROM.commit();
 
 	autoPlayTimeout = millis() + ( autoplayDuration * 1000 );
@@ -844,9 +853,9 @@ void setSolidColor( CRGB color ) { setSolidColor( color.r, color.g, color.b ); }
 void setSolidColor( uint8_t r, uint8_t g, uint8_t b ) {
 	solidColor = CRGB( r, g, b );
 
-	EEPROM.write( 2, r );
-	EEPROM.write( 3, g );
-	EEPROM.write( 4, b );
+	EEPROM.update( 2, r );
+	EEPROM.update( 3, g );
+	EEPROM.update( 4, b );
 	EEPROM.commit();
 
 	setPattern( patternCount - 1 );
@@ -869,7 +878,7 @@ void adjustPattern( bool up ) {
 		currentPatternIndex = 0;
 
 	if( autoplay == 0 ) {
-		EEPROM.write( 1, currentPatternIndex );
+		EEPROM.update( 1, currentPatternIndex );
 		EEPROM.commit();
 	}
 
@@ -883,7 +892,7 @@ void setPattern( uint8_t value ) {
 	currentPatternIndex = value;
 
 	if( autoplay == 0 ) {
-		EEPROM.write( 1, currentPatternIndex );
+		EEPROM.update( 1, currentPatternIndex );
 		EEPROM.commit();
 	}
 
@@ -906,7 +915,7 @@ void setPalette( uint8_t value ) {
 
 	currentPaletteIndex = value;
 
-	EEPROM.write( 8, currentPaletteIndex );
+	EEPROM.update( 8, currentPaletteIndex );
 	EEPROM.commit();
 
 	broadcastInt( "palette", currentPaletteIndex );
@@ -922,6 +931,24 @@ void setPaletteName( String name ) {
 	}
 }
 
+void writeStringToEEPROM( int addrOffset, const String& strToWrite ) {
+	byte len = strToWrite.length();
+	EEPROM.write( addrOffset, len );
+	for( int i = 0; i < len; i++ ) {
+		EEPROM.write( addrOffset + 1 + i, strToWrite[i] );
+	}
+}
+
+String readStringFromEEPROM( int addrOffset ) {
+	int newStrLen = EEPROM.read( addrOffset );
+	char data[newStrLen + 1];
+	for( int i = 0; i < newStrLen; i++ ) {
+		data[i] = EEPROM.read( addrOffset + 1 + i );
+	}
+	data[newStrLen] = '\0';
+	return String( data );
+}
+
 void adjustBrightness( bool up ) {
 	if( up && brightnessIndex < brightnessCount - 1 )
 		brightnessIndex++;
@@ -932,11 +959,13 @@ void adjustBrightness( bool up ) {
 
 	FastLED.setBrightness( brightness );
 
-	EEPROM.write( 0, brightness );
+	EEPROM.update( 0, brightness );
 	EEPROM.commit();
 
 	broadcastInt( "brightness", brightness );
 }
+
+void setMqttServer( String server ) {}
 
 void setBrightness( uint8_t value ) {
 	if( value > 255 )
@@ -948,7 +977,7 @@ void setBrightness( uint8_t value ) {
 
 	FastLED.setBrightness( brightness );
 
-	EEPROM.write( 0, brightness );
+	EEPROM.update( 0, brightness );
 	EEPROM.commit();
 
 	broadcastInt( "brightness", brightness );
