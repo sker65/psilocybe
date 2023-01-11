@@ -47,7 +47,29 @@
   <div id="container" class="container">
     <h2>MQTT Configuration</h2>
 
+    <p>
+      MQTT server support allows integration of our psilocybe in your smarthome (e.g. home assistant). It is fairly easy
+      to control your psilocybe
+      from home assitant via mqtt. you can send command messages to &lt;topic&gt;/cmd and you will receice status
+      messages on &lt;topic&gt;/status.
+      <br />
+      Accepted commands are:
+    <ul>
+      <li>power: 0|1 to switch on and off</li>
+      <li>brightness: 0..255 to set brightness</li>
+      <li>autoplay: 0|1 to start/stop autoplay</li>
+      <li>palette: palette index</li>
+      <li>pattern: effect pattern index</li>
+      <li>autoplayDuration: duration of autoplay for one effect</li>
+      <li>solidcolor: hexstring for color. format #RRGGBB</li>
+    </ul>
+    </p>
+
     <form>
+      <div class="form-check">
+        <input type="checkbox" class="form-check-input" id="mqttEnabled">
+        <label class="form-check-label" for="mqttEnabled">Enable Mqtt</label>
+      </div>
       <div class="form-group">
         <label for="mqttServer">Server</label>
         <input type="string" class="form-control" id="mqttServer" aria-describedby="serverHelp"
@@ -56,8 +78,8 @@
           1883.</small>
       </div>
       <div class="form-group">
-        <label for="topicPrefix">Topic Prefix</label>
-        <input type="string" class="form-control" id="topicPrefix" aria-describedby="prefixHelp"
+        <label for="mqttPrefix">Topic Prefix</label>
+        <input type="string" class="form-control" id="mqttPrefix" aria-describedby="prefixHelp"
           placeholder="Topic Prefix">
         <small id="prefixHelp" class="form-text text-muted">Topic prefix lets you configure more than one device, each
           with a different mqttt topic. Prefix must end with '/' and will be added with 'cmd' or 'state' for reporting
@@ -67,13 +89,23 @@
       <button id="mqttSave" type="button" class="btn btn-primary">Save</button>
     </form>
 
-    <button type="button" class="btn btn-primary" id="myBtn">Show Toast</button>
+    <!-- button type="button" class="btn btn-primary" id="myBtn">Show Toast</button -->
 
-    <div id="success" style="display: none;" class="alert alert-success">
-      <strong>Success!</strong> Saved your changes successfully.
+    <div id="alert" style="display: none;" class="alert alert-success">
+      foo
     </div>
-
   </div>
+  <nav class="navbar navbar-default navbar-fixed-bottom">
+    <div class="container">
+      <div class="collapse navbar-collapse" id="navbar-collapse-2">
+        <ul class="nav navbar-nav">
+          <li>
+            <p class="navbar-text" id="status">Loading, please wait...</p>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
 
 
   <!-- request js from internet CDN -->
@@ -90,20 +122,7 @@
   <!-- <script src="js/jquery-3.1.1.min.js"></script> -->
   <!-- <script src="js/bootstrap.min.js"></script> -->
 
-  <!-- script src="js/simple.js"></script -->
-  <script type="application/javascript">
-    $(document).ready(function () {
-      // 1. load current config from server
-
-      // 2. let save button post values to server, if changed
-      $('#myBtn').click(() => {
-        $('#success').fadeIn();
-        setTimeout(() => {
-          $('#success').fadeOut();
-        }, 2000);
-      });
-    });
-  </script>
+  <script src="js/mqtt.js"></script>
 
 </body>
 

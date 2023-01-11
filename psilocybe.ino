@@ -44,6 +44,8 @@ extern "C" {
 
 #include "Field.h"
 
+#define VERSION "0.1"
+
 #define HOSTNAME "Psilocybe-" ///< Hostname. The setup function adds the Chip ID at the end.
 
 WiFiClient espClient;
@@ -112,6 +114,10 @@ CRGBPalette16 IceColors_p = CRGBPalette16( CRGB::Black, CRGB::Blue, CRGB::Aqua, 
 
 uint8_t currentPatternIndex = 0; // Index number of which pattern is current
 uint8_t autoplay = 0;
+
+String mqttServer = String( "127.0.0.1" );
+String mqttPrefix = String( "psilocybe/psilo1/" );
+uint8_t mqttEnabled = 0;
 
 uint8_t autoplayDuration = 10;
 unsigned long autoPlayTimeout = 0;
@@ -266,10 +272,6 @@ const uint8_t patternCount = ARRAY_SIZE( patterns );
 
 #include "Fields.h"
 
-#define mqtt_server "192.168.178.89"
-
-#define MQTT_STATE_TOPIC "psilocybe/psilo1/state"
-
 // define a mqtt prefix
 
 int hexDigitToInt( char c ) {
@@ -324,10 +326,23 @@ void mqtt_callback( char* topic, byte* payload, unsigned int length ) {
 	}
 }
 
+char* getTopic( String prefix, const char* postfix ) {
+	static char topic[128];
+	strcpy( topic, prefix.c_str() );
+	strcat( topic, postfix );
+	return topic;
+}
+
+unsigned long mqtt_reconnect_time = 0;
+int mqtt_reconnect_attempts = 0;
+
 void mqtt_reconnect() {
 	// Loop until we're reconnected
-	while( !mqtt_client.connected() ) {
-		Serial.print( "Attempting MQTT connection..." );
+	if( !mqtt_client.connected() && mqttEnabled && millis() > mqtt_reconnect_time ) {
+		mqtt_client.setServer( mqttServer.c_str(), 1883 );
+		Serial.print( "Attempting MQTT connection to '" );
+		Serial.print( mqttServer );
+		Serial.print( "' ... " );
 		// Create a random client ID
 		String clientId = "ESP8266Client-";
 		clientId += String( random( 0xffff ), HEX );
@@ -335,17 +350,30 @@ void mqtt_reconnect() {
 		if( mqtt_client.connect( clientId.c_str() ) ) {
 			Serial.println( "connected" );
 			// Once connected, publish an announcement...
-			// TODO use configured prefix
-			mqtt_client.publish( "psilocybe/psilo1/info", "foo", 3 );
+			//  use configured prefix
+			String json = "{ \"clientId\": \"" + clientId + "\", \"IP\": \"" + WiFi.localIP().toString() +
+			              "\",\"version\":\"" + String( VERSION ) + "\" }";
+			int l = json.length();
+			Serial.println( "MQTT msg: " + json + ", len: " + l );
+			mqtt_client.publish( getTopic( mqttPrefix, "info" ), json.c_str() );
 			// ... and resubscribe
-			// TODO use configured prefix
-			mqtt_client.subscribe( "psilocybe/psilo1/cmd/#" );
+			// use configured prefix
+			char* topic = getTopic( mqttPrefix, "cmd/#" );
+			Serial.print( "Subscribing to '" );
+			Serial.print( topic );
+			Serial.println( "'" );
+			mqtt_client.subscribe( topic );
+			mqtt_reconnect_attempts = 0;
 		} else {
 			Serial.print( "failed, rc=" );
 			Serial.print( mqtt_client.state() );
-			Serial.println( " try again in 5 seconds" );
+			Serial.print( " try again in " );
+			int sec = 5 + mqtt_reconnect_attempts * 3;
+			Serial.print( sec );
+			Serial.println( " seconds" );
+			mqtt_reconnect_attempts++;
 			// Wait 5 seconds before retrying
-			delay( 5000 );
+			mqtt_reconnect_time = millis() + sec * 1000;
 		}
 	}
 }
@@ -381,11 +409,12 @@ void setup() {
 
 	setupRings();
 
-	mqtt_client.setServer( mqtt_server, 1883 );
-	mqtt_client.setCallback( mqtt_callback );
-
 	EEPROM.begin( 512 );
 	loadSettings();
+	if( mqttEnabled ) {
+		mqtt_client.setServer( mqttServer.c_str(), 1883 );
+		mqtt_client.setCallback( mqtt_callback );
+	}
 
 	FastLED.setBrightness( brightness );
 
@@ -581,6 +610,19 @@ void setup() {
 	webServer.on( "/mqttServer", HTTP_POST, []() {
 		String value = webServer.arg( "value" );
 		setMqttServer( value );
+		sendString( value );
+	} );
+
+	webServer.on( "/mqttPrefix", HTTP_POST, []() {
+		String value = webServer.arg( "value" );
+		setMqttPrefix( value );
+		sendString( value );
+	} );
+
+	webServer.on( "/mqttEnabled", HTTP_POST, []() {
+		String value = webServer.arg( "value" );
+		setMqttEnabled( value.toInt() == 0 ? 0 : 0xAB );
+		sendString( value );
 	} );
 
 	webServer.on( "/brightness", HTTP_POST, []() {
@@ -676,10 +718,11 @@ void loop() {
 	webSocketsServer.loop();
 	webServer.handleClient();
 
-	if( !mqtt_client.connected() ) {
+	if( !mqtt_client.connected() && mqttEnabled ) {
 		mqtt_reconnect();
 	}
-	mqtt_client.loop();
+	if( mqttEnabled && mqtt_client.connected() )
+		mqtt_client.loop();
 
 	if( power == 0 ) {
 		fill_solid( leds, NUM_LEDS, CRGB::Black );
@@ -763,34 +806,55 @@ void webSocketEvent( uint8_t num, WStype_t type, uint8_t* payload, size_t length
 	}
 }
 
-void loadSettings() {
-	brightness = EEPROM.read( 0 );
+// offsets of eeprom persisted settings
+#define EEPROM_BRIGHTNESS 0
+#define EEPROM_PATTERN 1
+#define EEPROM_RED 2
+#define EEPROM_GREEN 3
+#define EEPROM_BLUE 4
+#define EEPROM_POWER 5
+#define EEPROM_AUTOPLAY 6
+#define EEPROM_AUTOPLAY_DURATION 7
+#define EEPROM_PALETTE 8
+#define EEPROM_MQTT_ENABLED 9
+#define EEPROM_MQTT_SERVER 20
+#define EEPROM_MQTT_PREFIX 40
 
-	currentPatternIndex = EEPROM.read( 1 );
+void loadSettings() {
+	brightness = EEPROM.read( EEPROM_BRIGHTNESS );
+
+	currentPatternIndex = EEPROM.read( EEPROM_PATTERN );
 	if( currentPatternIndex < 0 )
 		currentPatternIndex = 0;
 	else if( currentPatternIndex >= patternCount )
 		currentPatternIndex = patternCount - 1;
 
-	byte r = EEPROM.read( 2 );
-	byte g = EEPROM.read( 3 );
-	byte b = EEPROM.read( 4 );
+	byte r = EEPROM.read( EEPROM_RED );
+	byte g = EEPROM.read( EEPROM_GREEN );
+	byte b = EEPROM.read( EEPROM_BLUE );
 
 	if( r == 0 && g == 0 && b == 0 ) {
 	} else {
 		solidColor = CRGB( r, g, b );
 	}
 
-	power = EEPROM.read( 5 );
+	power = EEPROM.read( EEPROM_POWER );
 
-	autoplay = EEPROM.read( 6 );
-	autoplayDuration = EEPROM.read( 7 );
+	autoplay = EEPROM.read( EEPROM_AUTOPLAY );
+	autoplayDuration = EEPROM.read( EEPROM_AUTOPLAY_DURATION );
 
-	currentPaletteIndex = EEPROM.read( 8 );
+	currentPaletteIndex = EEPROM.read( EEPROM_PALETTE );
 	if( currentPaletteIndex < 0 )
 		currentPaletteIndex = 0;
 	else if( currentPaletteIndex >= paletteCount )
 		currentPaletteIndex = paletteCount - 1;
+
+	// check if mqtt setting where ever written
+	if( EEPROM.read( EEPROM_MQTT_ENABLED ) == 0xAB ) { // magic number
+		mqttServer = readStringFromEEPROM( EEPROM_MQTT_SERVER );
+		mqttPrefix = readStringFromEEPROM( EEPROM_MQTT_PREFIX );
+		mqttEnabled = 1;
+	}
 }
 
 String hexstringFromCRGB( CRGB c ) {
@@ -798,28 +862,26 @@ String hexstringFromCRGB( CRGB c ) {
 	sprintf( hex, "#%02x%02x%02x", c.r, c.g, c.b );
 	return String( hex );
 }
+
 //{"power":"off", "brightness":99, "autoplay":1, "autoplayDuration":255, "solidColor":"#ff00ff", "pattern":64,
 //"palette":7}
 void publish_state() {
-	if( mqtt_client.connected() ) {
+	if( mqtt_client.connected() && mqttEnabled ) {
 		String json = "{\"power\":\"" + String( power ? "on" : "off" ) + "\", \"brightness\":" + String( brightness ) +
 		              ", \"autoplay\":" + String( autoplay ) + ", \"autoplayDuration\":" + String( autoplayDuration ) +
 		              ", \"solidColor\":\"" + hexstringFromCRGB( solidColor ) + //"\"}";
 		              "\", \"pattern\":" + String( currentPatternIndex ) +
 		              ", \"palette\":" + String( currentPaletteIndex ) + ", \"speed\": " + String( speed ) + "}";
 		int l = json.length();
-		Serial.println( "MQT msg: " + json + "len: " + l );
-		byte buf[l + 3];
-		json.getBytes( buf, l + 1 );
-		// TODO use configured prefix
-		mqtt_client.publish( MQTT_STATE_TOPIC, buf, l );
+		Serial.println( "MQTT msg: " + json + ", len: " + l );
+		mqtt_client.publish( getTopic( mqttPrefix, "state" ), json.c_str() );
 	}
 }
 
 void setPower( uint8_t value ) {
 	power = value == 0 ? 0 : 1;
 
-	EEPROM.update( 5, power );
+	EEPROM.write( EEPROM_POWER, power );
 	EEPROM.commit();
 
 	broadcastInt( "power", power );
@@ -829,7 +891,7 @@ void setPower( uint8_t value ) {
 void setAutoplay( uint8_t value ) {
 	autoplay = value == 0 ? 0 : 1;
 
-	EEPROM.update( 6, autoplay );
+	EEPROM.write( EEPROM_AUTOPLAY, autoplay );
 	EEPROM.commit();
 
 	broadcastInt( "autoplay", autoplay );
@@ -839,7 +901,7 @@ void setAutoplay( uint8_t value ) {
 void setAutoplayDuration( uint8_t value ) {
 	autoplayDuration = value;
 
-	EEPROM.update( 7, autoplayDuration );
+	EEPROM.write( EEPROM_AUTOPLAY_DURATION, autoplayDuration );
 	EEPROM.commit();
 
 	autoPlayTimeout = millis() + ( autoplayDuration * 1000 );
@@ -853,9 +915,9 @@ void setSolidColor( CRGB color ) { setSolidColor( color.r, color.g, color.b ); }
 void setSolidColor( uint8_t r, uint8_t g, uint8_t b ) {
 	solidColor = CRGB( r, g, b );
 
-	EEPROM.update( 2, r );
-	EEPROM.update( 3, g );
-	EEPROM.update( 4, b );
+	EEPROM.write( EEPROM_RED, r );
+	EEPROM.write( EEPROM_GREEN, g );
+	EEPROM.write( EEPROM_BLUE, b );
 	EEPROM.commit();
 
 	setPattern( patternCount - 1 );
@@ -878,7 +940,7 @@ void adjustPattern( bool up ) {
 		currentPatternIndex = 0;
 
 	if( autoplay == 0 ) {
-		EEPROM.update( 1, currentPatternIndex );
+		EEPROM.write( EEPROM_PATTERN, currentPatternIndex );
 		EEPROM.commit();
 	}
 
@@ -892,7 +954,7 @@ void setPattern( uint8_t value ) {
 	currentPatternIndex = value;
 
 	if( autoplay == 0 ) {
-		EEPROM.update( 1, currentPatternIndex );
+		EEPROM.write( EEPROM_PATTERN, currentPatternIndex );
 		EEPROM.commit();
 	}
 
@@ -915,7 +977,7 @@ void setPalette( uint8_t value ) {
 
 	currentPaletteIndex = value;
 
-	EEPROM.update( 8, currentPaletteIndex );
+	EEPROM.write( EEPROM_PALETTE, currentPaletteIndex );
 	EEPROM.commit();
 
 	broadcastInt( "palette", currentPaletteIndex );
@@ -959,13 +1021,41 @@ void adjustBrightness( bool up ) {
 
 	FastLED.setBrightness( brightness );
 
-	EEPROM.update( 0, brightness );
+	EEPROM.write( EEPROM_BRIGHTNESS, brightness );
 	EEPROM.commit();
 
 	broadcastInt( "brightness", brightness );
 }
 
-void setMqttServer( String server ) {}
+void mqttDisconnect() {
+	Serial.println( "MQTT disconnect" );
+	mqtt_client.disconnect();
+}
+
+void setMqttServer( String server ) {
+	writeStringToEEPROM( EEPROM_MQTT_SERVER, server );
+	mqttServer = server;
+	mqttDisconnect();
+	mqtt_client.setServer( server.c_str(), 1883 );
+}
+
+void setMqttPrefix( String prefix ) {
+	writeStringToEEPROM( EEPROM_MQTT_PREFIX, prefix );
+	mqttPrefix = prefix;
+	mqttDisconnect();
+}
+
+void setMqttEnabled( int enabled ) {
+	if( enabled && !mqttEnabled ) {
+		mqtt_client.setServer( mqttServer.c_str(), 1883 );
+	}
+	if( !enabled && mqttEnabled ) {
+		mqttDisconnect();
+	}
+	mqttEnabled = enabled;
+	EEPROM.write( EEPROM_MQTT_ENABLED, enabled );
+	EEPROM.commit();
+}
 
 void setBrightness( uint8_t value ) {
 	if( value > 255 )
@@ -977,7 +1067,7 @@ void setBrightness( uint8_t value ) {
 
 	FastLED.setBrightness( brightness );
 
-	EEPROM.update( 0, brightness );
+	EEPROM.write( EEPROM_BRIGHTNESS, brightness );
 	EEPROM.commit();
 
 	broadcastInt( "brightness", brightness );

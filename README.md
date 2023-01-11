@@ -54,3 +54,19 @@ This is an example how the Psilocybe can be configured as a home assistant mqtt 
 
 ````
 MQTT support in not completed yet, but all basic functions work already.
+
+MQTT is configureable you can set server name and prefix, and enable or diable support.
+
+Accepted commands are:
+    <ul>
+      <li>power: 0|1 to switch on and off</li>
+      <li>brightness: 0..255 to set brightness</li>
+      <li>autoplay: 0|1 to start/stop autoplay</li>
+      <li>palette: palette index</li>
+      <li>pattern: effect pattern index</li>
+      <li>autoplayDuration: duration of autoplay for one effect</li>
+      <li>solidcolor: hexstring for color. format #RRGGBB</li>
+    </ul>
+
+As soon as the device is online it publishs an info message on the topic
+&lt;topic&gt;/info with version infos for the firmware.
