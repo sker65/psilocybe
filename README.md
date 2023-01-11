@@ -69,4 +69,7 @@ Accepted commands are:
     </ul>
 
 As soon as the device is online it publishs an info message on the topic
-&lt;topic&gt;/info with version infos for the firmware.
+&lt;topic&gt;/info with version infos for the firmware, e.g.:
+````
+{ "clientId": "ESP8266Client-xxx", "IP": "x.x.x.x","version":"0.1" }
+````
