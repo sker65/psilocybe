@@ -73,3 +73,12 @@ As soon as the device is online it publishs an info message on the topic
 ````
 { "clientId": "ESP8266Client-xxx", "IP": "x.x.x.x","version":"0.1" }
 ````
+## MQTT config
+
+<img src="./images/config-mqtt.jpg">
+
+# Other improvements
+This firmware has some convenience features that were not part of the original firmware:
+
+- **OTA firmware update**: uses ArduinoOTA library, so that firmware and web ui data can be updated directly from ArduinoIDE over the air
+- **WiFiManager**: if no wifi is configured or wifi not in reach, a self service access point is started, with UI to pick wifi network and enter password
