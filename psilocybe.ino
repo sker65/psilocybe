@@ -292,27 +292,28 @@ void mqtt_callback( char* topic, byte* payload, unsigned int length ) {
 		Serial.print( (char)payload[i] );
 	}
 	Serial.println();
+	int len = mqttPrefix.length() + 4;
 	// psilocybe/psilo1/CMD/ -> len = 21
-	if( strlen( topic ) > 21 ) {
-		if( strcmp( topic + 21, "power" ) == 0 ) {
+	if( strlen( topic ) > len ) {
+		if( strcmp( topic + len, "power" ) == 0 ) {
 			setPower( strncmp( (char*)payload, "on", length ) == 0 ? 1 : 0 );
 		}
-		if( strcmp( topic + 21, "brightness" ) == 0 ) {
+		if( strcmp( topic + len, "brightness" ) == 0 ) {
 			setBrightness( String( (char*)payload ).toInt() );
 		}
-		if( strcmp( topic + 21, "autoplay" ) == 0 ) {
+		if( strcmp( topic + len, "autoplay" ) == 0 ) {
 			setAutoplay( String( (char*)payload ).toInt() );
 		}
-		if( strcmp( topic + 21, "pattern" ) == 0 ) {
+		if( strcmp( topic + len, "pattern" ) == 0 ) {
 			setPattern( String( (char*)payload ).toInt() );
 		}
-		if( strcmp( topic + 21, "palette" ) == 0 ) {
+		if( strcmp( topic + len, "palette" ) == 0 ) {
 			setPalette( String( (char*)payload ).toInt() );
 		}
-		if( strcmp( topic + 21, "autoplayDuration" ) == 0 ) {
+		if( strcmp( topic + len, "autoplayDuration" ) == 0 ) {
 			setAutoplayDuration( String( (char*)payload ).toInt() );
 		}
-		if( strcmp( topic + 21, "solidcolor" ) == 0 ) {
+		if( strcmp( topic + len, "solidcolor" ) == 0 ) {
 			if( payload[0] == '#' && length == 7 ) {
 				int r = hexDigitToInt( payload[1] ) * 16 + hexDigitToInt( payload[2] );
 				int g = hexDigitToInt( payload[3] ) * 16 + hexDigitToInt( payload[4] );
@@ -320,7 +321,7 @@ void mqtt_callback( char* topic, byte* payload, unsigned int length ) {
 				setSolidColor( CRGB( r, g, b ) );
 			}
 		}
-		if( strcmp( topic + 21, "speed" ) == 0 ) {
+		if( strcmp( topic + len, "speed" ) == 0 ) {
 			setSpeed( String( (char*)payload ).toInt() );
 		}
 	}

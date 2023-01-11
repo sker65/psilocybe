@@ -50,12 +50,13 @@
     <p>
       MQTT server support allows integration of our psilocybe in your smarthome (e.g. home assistant). It is fairly easy
       to control your psilocybe
-      from home assitant via mqtt. you can send command messages to &lt;topic&gt;/cmd and you will receice status
+      from home assitant via mqtt. you can send command messages to &lt;prefix&gt;/cmd/&lt;action&gt; and you will
+      receice status
       messages on &lt;topic&gt;/status.
       <br />
-      Accepted commands are:
+      Accepted action topics are:
     <ul>
-      <li>power: 0|1 to switch on and off</li>
+      <li>power: off|on to switch on and off</li>
       <li>brightness: 0..255 to set brightness</li>
       <li>autoplay: 0|1 to start/stop autoplay</li>
       <li>palette: palette index</li>
