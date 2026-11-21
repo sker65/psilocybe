@@ -282,6 +282,7 @@ int hexDigitToInt( char c ) {
 	} else if( c >= 'a' && c <= 'f' ) {
 		return ( c - 'a' ) + 10;
 	}
+	return 0;
 }
 
 void mqtt_callback( char* topic, byte* payload, unsigned int length ) {
