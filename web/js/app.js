@@ -12,7 +12,7 @@ var postValueTimer = {};
 var ignoreColorChange = false;
 
 var ws = new ReconnectingWebSocket('ws://' + address + ':81/', ['arduino']);
-ws.debug = true;
+ws.debug = false;
 
 ws.onmessage = function (evt) {
   if (evt.data != null) {
@@ -53,8 +53,8 @@ $(document).ready(function () {
 
     $("#status").html("Ready");
   })
-    .fail(function (errorThrown) {
-      console.log("error: " + errorThrown);
+    .fail(function () {
+      $("#status").html("Cannot reach the lamp");
     });
 });
 

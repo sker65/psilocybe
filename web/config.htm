@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Psilocybe - Config</title>
+  <script src="js/embed.js"></script>
+  <link rel="stylesheet" href="css/bootstrap.min.css">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="icon" href="images/atom196.png">
+</head>
+
+<body>
+
+  <nav class="navbar navbar-default navbar-static-top" role="banner">
+    <div class="container">
+      <div class="navbar-header">
+        <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar-collapse-1"
+          aria-expanded="false">
+          <span class="sr-only">Toggle navigation</span>
+          <span class="icon-bar"></span>
+          <span class="icon-bar"></span>
+          <span class="icon-bar"></span>
+        </button>
+        <a class="navbar-brand" href="/">Psilocybe</a>
+      </div>
+      <div class="collapse navbar-collapse" id="navbar-collapse-1">
+        <ul class="nav navbar-nav">
+          <li><a href="/">Mothership</a></li>
+          <li><a href="/simple.htm">Simple</a></li>
+          <li class="active"><a href="/config.htm">Config <span class="sr-only">(current)</span></a></li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <div id="container" class="container">
+
+    <!-- Device -->
+    <div class="panel panel-default">
+      <div class="panel-heading"><strong>Device</strong></div>
+      <table class="table table-condensed info-table" id="info">
+        <tbody>
+          <tr><td>Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- MQTT -->
+    <div class="panel panel-default">
+      <div class="panel-heading">
+        <strong>MQTT</strong>
+        <span class="label label-default pull-right" id="mqttStatus"></span>
+      </div>
+      <div class="panel-body">
+        <form id="mqttForm">
+          <div class="checkbox">
+            <label><input type="checkbox" id="mqttEnabled"> Enable MQTT</label>
+          </div>
+          <div class="form-group">
+            <label for="mqttServer">Server</label>
+            <input type="text" class="form-control" id="mqttServer" placeholder="e.g. 192.168.178.10"
+              autocapitalize="off" autocorrect="off" spellcheck="false">
+            <p class="help-block">Host name or IP address without port, port is always 1883.
+              Max. <span id="mqttServerMaxLen">19</span> characters.</p>
+          </div>
+          <div class="form-group">
+            <label for="mqttPrefix">Topic prefix</label>
+            <input type="text" class="form-control" id="mqttPrefix" placeholder="psilocybe/psilo1/"
+              autocapitalize="off" autocorrect="off" spellcheck="false">
+            <p class="help-block">Must end with <code>/</code>. Use a different prefix for each lamp.</p>
+          </div>
+          <button id="mqttSave" type="submit" class="btn btn-primary">Save</button>
+        </form>
+        <div id="mqttAlert" class="alert" style="display: none; margin: 15px 0 0 0;"></div>
+
+        <hr>
+        <p class="help-block" style="margin-bottom: 0">
+          Commands are received on <code>&lt;prefix&gt;cmd/&lt;action&gt;</code>, the state is published as JSON on
+          <code>&lt;prefix&gt;state</code>, device info on <code>&lt;prefix&gt;info</code>.<br>
+          Actions: <code>power</code> (on|off), <code>brightness</code> (0..255), <code>autoplay</code> (0|1),
+          <code>autoplayDuration</code>, <code>pattern</code> (index), <code>palette</code> (index),
+          <code>speed</code> (1..255), <code>solidcolor</code> (#RRGGBB).
+        </p>
+      </div>
+    </div>
+
+    <!-- Firmware -->
+    <div class="panel panel-default">
+      <div class="panel-heading"><strong>Firmware update</strong></div>
+      <div class="panel-body">
+        <p class="help-block">Upload <code>.pio/build/d1_mini/firmware.bin</code>. Firmware and web UI are updated
+          together, settings are kept.</p>
+        <div class="form-group">
+          <input type="file" id="fwFile" accept=".bin,.bin.gz">
+        </div>
+        <button id="fwUpload" type="button" class="btn btn-primary">Upload &amp; flash</button>
+        <div class="progress" id="fwProgress" style="display: none; margin: 15px 0 0 0;">
+          <div class="progress-bar" role="progressbar" style="width: 0%">0%</div>
+        </div>
+        <div id="fwAlert" class="alert" style="display: none; margin: 15px 0 0 0;"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="statusbar">
+    <a href="" aria-label="Refresh" title="Refresh"><span class="glyphicon glyphicon-refresh"></span></a>
+    <span id="status">Loading, please wait...</span>
+  </div>
+
+  <script src="js/jquery-3.1.1.min.js"></script>
+  <script src="js/bootstrap.min.js"></script>
+  <script src="js/config.js"></script>
+
+</body>
+
+</html>

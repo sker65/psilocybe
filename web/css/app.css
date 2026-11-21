@@ -1,0 +1,91 @@
+body {
+  padding-bottom: 50px;
+}
+
+/* no double-tap zoom delay on touch devices */
+a, button, input, select, label, .grid-item-color {
+  touch-action: manipulation;
+}
+
+/* compact mode inside an iframe (see js/embed.js) */
+.embedded .navbar-static-top {
+  display: none;
+}
+.embedded body {
+  padding-top: 10px;
+}
+
+/* status line at the bottom, always visible (also on phones) */
+.statusbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1030;
+  padding: 8px 15px;
+  background: #f8f8f8;
+  border-top: 1px solid #e7e7e7;
+  color: #777;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.statusbar a {
+  color: #777;
+  margin-right: 10px;
+}
+
+/* Mothership: labels above the controls on phones */
+@media (max-width: 767px) {
+  .form-horizontal .control-label {
+    padding-top: 0;
+    margin-bottom: 4px;
+  }
+}
+input[type="range"].form-control {
+  padding-left: 0;
+  padding-right: 0;
+  box-shadow: none;
+  border: none;
+}
+
+/* Simple */
+.power-buttons {
+  margin: 0 0 12px 0;
+}
+.power-buttons .btn {
+  min-width: 90px;
+}
+
+.grid-pattern {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  grid-gap: 8px;
+  margin-bottom: 16px;
+}
+.grid-item-pattern {
+  height: 72px;
+  padding: 6px;
+  white-space: normal;
+}
+
+.grid-color {
+  display: grid;
+  grid-template-columns: repeat(25, 1fr);
+}
+.grid-item-color {
+  height: 32px;
+  cursor: pointer;
+}
+.grid-item-color.selected {
+  outline: 2px solid #333;
+  outline-offset: -2px;
+}
+
+/* Config */
+.info-table th {
+  width: 35%;
+  font-weight: normal;
+  color: #777;
+}

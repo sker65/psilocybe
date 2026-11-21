@@ -31,7 +31,6 @@ extern "C" {
 #include <ESP8266WebServer.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
-#include <FS.h>
 #include <WebSocketsServer.h>
 #include <WiFiManager.h>
 
@@ -44,7 +43,10 @@ extern "C" {
 
 #include "Field.h"
 
-#define VERSION "0.1"
+#define VERSION "0.2"
+
+#define STRINGIFY_( x ) #x
+#define STRINGIFY( x ) STRINGIFY_( x )
 
 #define HOSTNAME "Psilocybe-" ///< Hostname. The setup function adds the Chip ID at the end.
 
@@ -60,10 +62,10 @@ ESP8266WebServer webServer( 80 );
 WebSocketsServer webSocketsServer = WebSocketsServer( 81 );
 ESP8266HTTPUpdateServer httpUpdateServer;
 
-// does not build with eps8266 SDK > 3 see https://github.com/arrowhead-f/ArrowheadESP/issues/6
-// use 2.7.4 instead
+String hostname;
 
-#include "FSBrowser.h"
+// web UI, generated from web/ by tools/embed_web.py at build time
+#include "web_assets.h"
 
 #define DATA_PIN D4 // was D5
 #define LED_TYPE WS2812B
@@ -71,6 +73,23 @@ ESP8266HTTPUpdateServer httpUpdateServer;
 #define NUM_LEDS 241 // 73 was 241
 
 #define MILLI_AMPS 4000 // IMPORTANT: set the max milli-Amps of your power supply (4A = 4000mA)
+
+// EEPROM layout (do not change: would lose the stored settings)
+#define EEPROM_BRIGHTNESS 0
+#define EEPROM_PATTERN 1
+#define EEPROM_RED 2
+#define EEPROM_GREEN 3
+#define EEPROM_BLUE 4
+#define EEPROM_POWER 5
+#define EEPROM_AUTOPLAY 6
+#define EEPROM_AUTOPLAY_DURATION 7
+#define EEPROM_PALETTE 8
+#define EEPROM_MQTT_ENABLED 9
+#define EEPROM_MQTT_SERVER 20
+#define EEPROM_MQTT_PREFIX 40
+// server string (length byte + chars) must end before EEPROM_MQTT_PREFIX
+#define MQTT_SERVER_MAX_LEN ( EEPROM_MQTT_PREFIX - EEPROM_MQTT_SERVER - 1 )
+#define MQTT_PREFIX_MAX_LEN 64
 
 // unused
 // #define FRAMES_PER_SECOND \ 	120 // here you can control the speed. With the Access Point / Web Server the animations
@@ -413,9 +432,10 @@ void setup() {
 
 	EEPROM.begin( 512 );
 	loadSettings();
+	// callback always, so commands also work when MQTT gets enabled later via the web UI
+	mqtt_client.setCallback( mqtt_callback );
 	if( mqttEnabled ) {
 		mqtt_client.setServer( mqttServer.c_str(), 1883 );
-		mqtt_client.setCallback( mqtt_callback );
 	}
 
 	FastLED.setBrightness( brightness );
@@ -443,19 +463,8 @@ void setup() {
 	Serial.println( WiFi.localIP() );
 	Serial.println();
 
-	SPIFFS.begin();
-	{
-		Dir dir = SPIFFS.openDir( "/" );
-		while( dir.next() ) {
-			String fileName = dir.fileName();
-			size_t fileSize = dir.fileSize();
-			Serial.printf( "FS File: %s, size: %s\n", fileName.c_str(), String( fileSize ).c_str() );
-		}
-		Serial.printf( "\n" );
-	}
-
 	// Set Hostname.
-	String hostname( HOSTNAME );
+	hostname = HOSTNAME;
 	hostname += String( ESP.getChipId(), HEX );
 	WiFi.hostname( hostname );
 
@@ -510,7 +519,15 @@ void setup() {
 	} );
 	ArduinoOTA.begin();
 
+	// the update server's own GET page is bare HTML - firmware upload lives on the config page.
+	// Registered before httpUpdateServer.setup() so it takes precedence.
+	webServer.on( "/update", HTTP_GET, []() {
+		webServer.sendHeader( "Location", "/config.htm" );
+		webServer.send( 302, "text/plain", "" );
+	} );
 	httpUpdateServer.setup( &webServer );
+
+	webServer.on( "/info", HTTP_GET, []() { webServer.send( 200, "application/json", getInfoJson() ); } );
 
 	webServer.on( "/all", HTTP_GET, []() {
 		String json = getFieldsJson( fields, fieldCount );
@@ -645,23 +662,12 @@ void setup() {
 		sendInt( autoplayDuration );
 	} );
 
-	// list directory
-	webServer.on( "/list", HTTP_GET, handleFileList );
-	// load editor
-	webServer.on( "/edit", HTTP_GET, []() {
-		if( !handleFileRead( "/edit.htm" ) )
-			webServer.send( 404, "text/plain", "FileNotFound" );
+	// everything else: embedded web UI
+	webServer.collectHeaders( "If-None-Match" );
+	webServer.onNotFound( []() {
+		if( !serveWebAsset( webServer.uri() ) )
+			webServer.send( 404, "text/plain", "Not found" );
 	} );
-	// create file
-	webServer.on( "/edit", HTTP_PUT, handleFileCreate );
-	// delete file
-	webServer.on( "/edit", HTTP_DELETE, handleFileDelete );
-	// first callback is called after the request has ended with all parsed arguments
-	// second callback handles file uploads at that location
-	webServer.on(
-	    "/edit", HTTP_POST, []() { webServer.send( 200, "text/plain", "" ); }, handleFileUpload );
-
-	webServer.serveStatic( "/", SPIFFS, "/", "max-age=86400" );
 
 	webServer.begin();
 	Serial.println( "HTTP web server started" );
@@ -681,6 +687,78 @@ void setup() {
 	autoPlayTimeout = now + ( autoplayDuration * 1000 );
 	speedTime1 = now;
 	speedTime2 = now;
+}
+
+// serves a file of the embedded web UI (see tools/embed_web.py)
+bool serveWebAsset( String path ) {
+	if( path.endsWith( "/" ) )
+		path += "index.htm";
+	for( size_t i = 0; i < webAssetCount; i++ ) {
+		const WebAsset& asset = webAssets[i];
+		if( path != asset.path )
+			continue;
+		// no-cache + ETag: the browser revalidates every time and gets a cheap 304 unless the
+		// firmware (and with it the UI) changed
+		webServer.sendHeader( "Cache-Control", "no-cache" );
+		webServer.sendHeader( "ETag", asset.etag );
+		if( webServer.header( "If-None-Match" ) == asset.etag ) {
+			webServer.send( 304 );
+			return true;
+		}
+		webServer.sendHeader( "Content-Encoding", "gzip" );
+		webServer.send_P( 200, asset.mime, (PGM_P)asset.data, asset.length );
+		return true;
+	}
+	return false;
+}
+
+String jsonEscape( const String& s ) {
+	String out;
+	out.reserve( s.length() + 2 );
+	for( size_t i = 0; i < s.length(); i++ ) {
+		char c = s[i];
+		if( c == '"' || c == '\\' ) {
+			out += '\\';
+			out += c;
+		} else if( (uint8_t)c < 0x20 ) {
+			out += ' ';
+		} else {
+			out += c;
+		}
+	}
+	return out;
+}
+
+// read-only device information and MQTT settings for the config page
+String getInfoJson() {
+	String json = "{";
+	json += "\"version\":\"" VERSION "\"";
+	json += ",\"build\":\"" __DATE__ " " __TIME__ "\"";
+	json += ",\"dataPin\":\"" STRINGIFY( DATA_PIN ) "\"";
+	json += ",\"dataGpio\":" + String( DATA_PIN );
+	json += ",\"ledType\":\"" STRINGIFY( LED_TYPE ) "\"";
+	json += ",\"colorOrder\":\"" STRINGIFY( COLOR_ORDER ) "\"";
+	json += ",\"numLeds\":" + String( NUM_LEDS );
+	json += ",\"maxMilliAmps\":" + String( MILLI_AMPS );
+	json += ",\"hostname\":\"" + jsonEscape( hostname ) + "\"";
+	json += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
+	json += ",\"mac\":\"" + WiFi.macAddress() + "\"";
+	json += ",\"ssid\":\"" + jsonEscape( WiFi.SSID() ) + "\"";
+	json += ",\"rssi\":" + String( WiFi.RSSI() );
+	json += ",\"uptime\":" + String( millis() / 1000 );
+	json += ",\"freeHeap\":" + String( ESP.getFreeHeap() );
+	json += ",\"flashSize\":" + String( ESP.getFlashChipRealSize() );
+	json += ",\"sketchSize\":" + String( ESP.getSketchSize() );
+	json += ",\"freeSketchSpace\":" + String( ESP.getFreeSketchSpace() );
+	json += ",\"core\":\"" + ESP.getCoreVersion() + "\"";
+	json += ",\"mqttEnabled\":" + String( mqttEnabled ? 1 : 0 );
+	json += ",\"mqttConnected\":" + String( mqtt_client.connected() ? 1 : 0 );
+	json += ",\"mqttServer\":\"" + jsonEscape( mqttServer ) + "\"";
+	json += ",\"mqttPrefix\":\"" + jsonEscape( mqttPrefix ) + "\"";
+	json += ",\"mqttServerMaxLen\":" + String( MQTT_SERVER_MAX_LEN );
+	json += ",\"mqttPrefixMaxLen\":" + String( MQTT_PREFIX_MAX_LEN );
+	json += "}";
+	return json;
 }
 
 void sendInt( uint8_t value ) { sendString( String( value ) ); }
@@ -809,18 +887,6 @@ void webSocketEvent( uint8_t num, WStype_t type, uint8_t* payload, size_t length
 }
 
 // offsets of eeprom persisted settings
-#define EEPROM_BRIGHTNESS 0
-#define EEPROM_PATTERN 1
-#define EEPROM_RED 2
-#define EEPROM_GREEN 3
-#define EEPROM_BLUE 4
-#define EEPROM_POWER 5
-#define EEPROM_AUTOPLAY 6
-#define EEPROM_AUTOPLAY_DURATION 7
-#define EEPROM_PALETTE 8
-#define EEPROM_MQTT_ENABLED 9
-#define EEPROM_MQTT_SERVER 20
-#define EEPROM_MQTT_PREFIX 40
 
 void loadSettings() {
 	brightness = EEPROM.read( EEPROM_BRIGHTNESS );
@@ -853,8 +919,8 @@ void loadSettings() {
 
 	// check if mqtt setting where ever written
 	if( EEPROM.read( EEPROM_MQTT_ENABLED ) == 0xAB ) { // magic number
-		mqttServer = readStringFromEEPROM( EEPROM_MQTT_SERVER );
-		mqttPrefix = readStringFromEEPROM( EEPROM_MQTT_PREFIX );
+		mqttServer = readStringFromEEPROM( EEPROM_MQTT_SERVER, MQTT_SERVER_MAX_LEN );
+		mqttPrefix = readStringFromEEPROM( EEPROM_MQTT_PREFIX, MQTT_PREFIX_MAX_LEN );
 		mqttEnabled = 1;
 	}
 }
@@ -995,16 +1061,22 @@ void setPaletteName( String name ) {
 	}
 }
 
-void writeStringToEEPROM( int addrOffset, const String& strToWrite ) {
-	byte len = strToWrite.length();
+// writes a length-prefixed string, truncated to maxLen, and commits it
+void writeStringToEEPROM( int addrOffset, const String& strToWrite, int maxLen ) {
+	int len = strToWrite.length();
+	if( len > maxLen )
+		len = maxLen;
 	EEPROM.write( addrOffset, len );
 	for( int i = 0; i < len; i++ ) {
 		EEPROM.write( addrOffset + 1 + i, strToWrite[i] );
 	}
+	EEPROM.commit();
 }
 
-String readStringFromEEPROM( int addrOffset ) {
+String readStringFromEEPROM( int addrOffset, int maxLen ) {
 	int newStrLen = EEPROM.read( addrOffset );
+	if( newStrLen > maxLen )
+		newStrLen = maxLen;
 	char data[newStrLen + 1];
 	for( int i = 0; i < newStrLen; i++ ) {
 		data[i] = EEPROM.read( addrOffset + 1 + i );
@@ -1035,14 +1107,17 @@ void mqttDisconnect() {
 }
 
 void setMqttServer( String server ) {
-	writeStringToEEPROM( EEPROM_MQTT_SERVER, server );
+	server = server.substring( 0, MQTT_SERVER_MAX_LEN );
+	writeStringToEEPROM( EEPROM_MQTT_SERVER, server, MQTT_SERVER_MAX_LEN );
 	mqttServer = server;
 	mqttDisconnect();
-	mqtt_client.setServer( server.c_str(), 1883 );
+	// PubSubClient keeps the pointer, so it must point to the global, not to the parameter
+	mqtt_client.setServer( mqttServer.c_str(), 1883 );
 }
 
 void setMqttPrefix( String prefix ) {
-	writeStringToEEPROM( EEPROM_MQTT_PREFIX, prefix );
+	prefix = prefix.substring( 0, MQTT_PREFIX_MAX_LEN );
+	writeStringToEEPROM( EEPROM_MQTT_PREFIX, prefix, MQTT_PREFIX_MAX_LEN );
 	mqttPrefix = prefix;
 	mqttDisconnect();
 }

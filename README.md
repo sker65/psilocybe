@@ -26,9 +26,30 @@ Firmware is a fork of Jasons initial version https://github.com/evilgeniuslabs/p
 - OTA for easier firmware updates
 - speed control for almost all effects
 
+Build & flash
+-------------
+The project is built with [PlatformIO](https://platformio.org) (`platformio.ini`), target is a Wemos D1 mini (ESP8266, 4 MB).
+
+```
+pio run                               # build
+pio run -e d1_mini -t upload          # flash via USB
+pio run -e d1_mini_ota -t upload      # flash via OTA (ArduinoOTA, see upload_port)
+```
+
+The web UI in `web/` is embedded into the firmware at build time (`tools/embed_web.py`), so there is no
+separate filesystem image: one upload updates firmware and UI together. Alternatively upload
+`.pio/build/d1_mini/firmware.bin` on the *Config* page of the web UI.
+
 WEB UI
 ------
 The embedded webserver presents a nice UI to control the lamp. The UI is updated in realtime even if you control the device via mqtt.
+
+- *Mothership* (`/`): all settings
+- *Simple* (`/simple.htm`): on/off, patterns and colors, made for phones
+- *Config* (`/config.htm`): device info (LED pin, versions, ...), MQTT settings and firmware upload
+
+Inside an iframe (e.g. a Home Assistant webpage card) the navigation is hidden automatically; `?embed=1` / `?embed=0`
+forces it off / on. Note that a Home Assistant instance served via https cannot embed the lamp's plain http page.
 <img src="./images/ui.jpg">
 
 MQTT 

@@ -47,7 +47,7 @@ var patterns = [
 ];
 
 var ws = new ReconnectingWebSocket('ws://' + address + ':81/', ['arduino']);
-ws.debug = true;
+ws.debug = false;
 
 ws.onmessage = function(evt) {
   if(evt.data != null)
@@ -94,7 +94,9 @@ $(document).ready(function() {
           break;
       }
     });
-  });
+    $("#status").html("Ready");
+  })
+    .fail(function () { $("#status").html("Cannot reach the lamp"); });
 
   addColorButtons();
 
@@ -109,8 +111,6 @@ $(document).ready(function() {
     $("#btnOff").attr("class", "btn btn-primary");
     $("#btnOn").attr("class", "btn btn-default");
   });
-
-  $("#status").html("Ready");
 });
 
 function addColorButtons() {
@@ -126,11 +126,6 @@ function addColorButtons() {
     }
   }
 
-  $('.grid-color').isotope({
-    itemSelector: '.grid-item-color',
-    layoutMode: 'fitRows'
-  });
-
 }
 
 var colorButtonIndex = 0;
@@ -144,8 +139,8 @@ function addColorButton(h, s, l) {
     var rgb = $(this).css('backgroundColor');
     var components = rgbToComponents(rgb);
 
-    $(".grid-item-color").css("border", "none");
-    $(this).css("border", "1px solid");
+    $(".grid-item-color").removeClass("selected");
+    $(this).addClass("selected");
 
     postColor("solidColor", components);
   });
@@ -163,17 +158,12 @@ function addPatternButtons(patternField) {
     template.text(pattern);
     template.click(function() {
       postValue("patternName", pattern);
-      $(".grid-item-color").css("border", "none");
+      $(".grid-item-color").removeClass("selected");
       $(".grid-item-pattern").attr("class", "grid-item-pattern btn btn-default");
       $(this).attr("class", "grid-item-pattern btn btn-primary");
     });
 
     $("#patternGrid").append(template);
-  });
-
-  $('.grid-pattern').isotope({
-    itemSelector: '.grid-item-pattern',
-    layoutMode: 'fitRows'
   });
 
   $("#pattern-button-" + patternField.value).attr("class", "grid-item-pattern btn btn-primary");
