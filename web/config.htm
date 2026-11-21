@@ -48,6 +48,24 @@
       </table>
     </div>
 
+    <!-- LEDs -->
+    <div class="panel panel-default">
+      <div class="panel-heading"><strong>LEDs</strong></div>
+      <div class="panel-body">
+        <form id="ledForm" class="form-inline">
+          <div class="form-group">
+            <label for="numLeds">Number of LEDs</label>
+            <input type="number" class="form-control" id="numLeds" min="1" max="241" step="1" style="width: 100px">
+          </div>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+        <p class="help-block" style="margin-bottom: 0">LEDs actually connected (max. <span id="maxLeds">241</span>,
+          the original lamp with 9 rings). Tip: switch to <em>Solid Color</em> to check that all LEDs light up.
+          Ring and XY effects are designed for the original lamp and only show the part that is connected.</p>
+        <div id="ledAlert" class="alert" style="display: none; margin: 15px 0 0 0;"></div>
+      </div>
+    </div>
+
     <!-- MQTT -->
     <div class="panel panel-default">
       <div class="panel-heading">

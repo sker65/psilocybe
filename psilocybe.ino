@@ -47,7 +47,7 @@ extern "C" {
 
 #include "Field.h"
 
-#define VERSION "0.4"
+#define VERSION "0.5"
 
 #define STRINGIFY_( x ) #x
 #define STRINGIFY( x ) STRINGIFY_( x )
@@ -74,7 +74,9 @@ String hostname;
 #define DATA_PIN D4 // was D5
 #define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
-#define NUM_LEDS 241 // 73 was 241
+// NUM_LEDS: maximum / geometry of the original lamp (9 concentric rings, see Disk.h, Map.h).
+// The number of LEDs actually connected (numLeds) is set on the config page.
+#define NUM_LEDS 241
 
 #define MILLI_AMPS 4000 // IMPORTANT: set the max milli-Amps of your power supply (4A = 4000mA)
 
@@ -93,6 +95,7 @@ String hostname;
 #define EEPROM_MQTT_PREFIX 40
 #define EEPROM_MQTT_DISCOVERY 10 // 0xAB = Home Assistant discovery enabled
 #define EEPROM_PALETTE_SETTING 11 // 0 = auto, 1..paletteCount = fixed palette (EEPROM_PALETTE is unused)
+#define EEPROM_NUM_LEDS 12 // 1..NUM_LEDS, anything else = NUM_LEDS
 // server string (length byte + chars) must end before EEPROM_MQTT_PREFIX
 #define MQTT_SERVER_MAX_LEN ( EEPROM_MQTT_PREFIX - EEPROM_MQTT_SERVER - 1 )
 #define MQTT_PREFIX_MAX_LEN 64
@@ -102,6 +105,7 @@ String hostname;
 // run a bit slower.
 
 CRGB leds[NUM_LEDS];
+uint8_t numLeds = NUM_LEDS; // LEDs actually connected, 1..NUM_LEDS
 
 const uint8_t brightnessCount = 5;
 uint8_t brightnessMap[brightnessCount] = { 16, 32, 64, 128, 255 };
@@ -185,7 +189,7 @@ void wifiManagerCallback( WiFiManager* myWiFiManager ) {
 
 // scale the brightness of all pixels down
 void dimAll( byte value ) {
-	for( int i = 0; i < NUM_LEDS; i++ ) {
+	for( int i = 0; i < NUM_LEDS; i++ ) { // all, geometry effects also draw beyond numLeds
 		leds[i].nscale8( value );
 	}
 }
@@ -719,6 +723,7 @@ void setup() {
 
 	EEPROM.begin( 512 );
 	loadSettings();
+	FastLED[0].setLeds( leds, numLeds );
 	// callback always, so commands also work when MQTT gets enabled later via the web UI
 	mqtt_client.setCallback( mqtt_callback );
 	mqtt_client.setBufferSize( MQTT_BUFFER_SIZE );
@@ -786,7 +791,7 @@ void setup() {
 		FastLED.show();
 	} );
 	ArduinoOTA.onProgress( []( unsigned int progress, unsigned int total ) {
-		fill_solid( leds, (int)( NUM_LEDS * ( (float)progress / (float)total ) ), CRGB::Blue );
+		fill_solid( leds, (int)( numLeds * ( (float)progress / (float)total ) ), CRGB::Blue );
 		FastLED.show();
 		Serial.printf( "OTA Progress: %u%%\r\n", ( progress / ( total / 100 ) ) );
 	} );
@@ -927,6 +932,11 @@ void setup() {
 		sendString( value );
 	} );
 
+	webServer.on( "/numLeds", HTTP_POST, []() {
+		setNumLeds( webServer.arg( "value" ).toInt() );
+		sendInt( numLeds );
+	} );
+
 	webServer.on( "/mqttDiscovery", HTTP_POST, []() {
 		String value = webServer.arg( "value" );
 		setMqttDiscovery( value.toInt() );
@@ -1033,7 +1043,8 @@ String getInfoJson() {
 	json += ",\"dataGpio\":" + String( DATA_PIN );
 	json += ",\"ledType\":\"" STRINGIFY( LED_TYPE ) "\"";
 	json += ",\"colorOrder\":\"" STRINGIFY( COLOR_ORDER ) "\"";
-	json += ",\"numLeds\":" + String( NUM_LEDS );
+	json += ",\"numLeds\":" + String( numLeds );
+	json += ",\"maxLeds\":" + String( NUM_LEDS );
 	json += ",\"maxMilliAmps\":" + String( MILLI_AMPS );
 	json += ",\"hostname\":\"" + jsonEscape( hostname ) + "\"";
 	json += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
@@ -1220,6 +1231,28 @@ void loadSettings() {
 		mqttEnabled = 1;
 	}
 	mqttDiscovery = EEPROM.read( EEPROM_MQTT_DISCOVERY ) == 0xAB;
+
+	numLeds = EEPROM.read( EEPROM_NUM_LEDS );
+	if( numLeds < 1 || numLeds > NUM_LEDS )
+		numLeds = NUM_LEDS;
+}
+
+// number of LEDs actually connected, takes effect immediately
+void setNumLeds( int value ) {
+	if( value < 1 )
+		value = 1;
+	if( value > NUM_LEDS )
+		value = NUM_LEDS;
+
+	// switch off LEDs that are no longer driven (with the old count still active)
+	fill_solid( leds, NUM_LEDS, CRGB::Black );
+	FastLED.show();
+
+	numLeds = value;
+	FastLED[0].setLeds( leds, numLeds );
+
+	EEPROM.write( EEPROM_NUM_LEDS, numLeds );
+	EEPROM.commit();
 }
 
 String hexstringFromCRGB( CRGB c ) {
@@ -1492,7 +1525,7 @@ void strandTest() {
 
 	EVERY_N_SECONDS( 1 ) {
 		i++;
-		if( i >= NUM_LEDS )
+		if( i >= numLeds )
 			i = 0;
 	}
 
@@ -1501,7 +1534,7 @@ void strandTest() {
 	leds[i] = solidColor;
 }
 
-void showSolidColor() { fill_solid( leds, NUM_LEDS, solidColor ); }
+void showSolidColor() { fill_solid( leds, numLeds, solidColor ); }
 
 void horizontalRainbow() {
 	unsigned long t = millis();
@@ -1638,7 +1671,7 @@ void pulse() {
 
 void rainbow() {
 	// FastLED's built-in rainbow generator
-	fill_rainbow( leds, NUM_LEDS, gHue, 255 / NUM_LEDS );
+	fill_rainbow( leds, numLeds, gHue, 255 / numLeds );
 }
 
 void rainbowWithGlitter() {
@@ -1647,12 +1680,12 @@ void rainbowWithGlitter() {
 	addGlitter( 80 );
 }
 
-void rainbowSolid() { fill_solid( leds, NUM_LEDS, CHSV( gHue, 255, 255 ) ); }
+void rainbowSolid() { fill_solid( leds, numLeds, CHSV( gHue, 255, 255 ) ); }
 
 void confetti() {
 	// random colored speckles that blink in and fade smoothly
 	fadeToBlackBy( leds, NUM_LEDS, 10 );
-	int pos = random16( NUM_LEDS );
+	int pos = random16( numLeds );
 	// leds[pos] += CHSV( gHue + random8(64), 200, 255);
 	leds[pos] += ColorFromPalette( currentPalette, gHue + random8( 64 ) );
 }
@@ -1660,7 +1693,7 @@ void confetti() {
 void sinelon() {
 	// a colored dot sweeping back and forth, with fading trails
 	fadeToBlackBy( leds, NUM_LEDS, 20 );
-	int pos = beatsin16( speed, 0, NUM_LEDS );
+	int pos = beatsin16( speed, 0, numLeds );
 	static int prevpos = 0;
 	CRGB color = ColorFromPalette( currentPalette, gHue, 255 );
 	if( pos < prevpos ) {
@@ -1675,7 +1708,7 @@ void bpm() {
 	// colored stripes pulsing at a defined Beats-Per-Minute (BPM)
 	uint8_t beat = beatsin8( speed, 64, 255 );
 	CRGBPalette16 palette = currentPalette;
-	for( int i = 0; i < NUM_LEDS; i++ ) {
+	for( int i = 0; i < numLeds; i++ ) {
 		leds[i] = ColorFromPalette( palette, gHue + ( i * 2 ), beat - gHue + ( i * 10 ) );
 	}
 }
@@ -1732,7 +1765,7 @@ void juggle() {
 	fadeToBlackBy( leds, NUM_LEDS, faderate );
 	for( int i = 0; i < numdots; i++ ) {
 		// beat16 is a FastLED 3.1 function
-		leds[beatsin16( basebeat + i + numdots, 0, NUM_LEDS )] += CHSV( gHue + curhue, thissat, thisbright );
+		leds[beatsin16( basebeat + i + numdots, 0, numLeds )] += CHSV( gHue + curhue, thissat, thisbright );
 		curhue += hueinc;
 	}
 }
@@ -1764,7 +1797,7 @@ void pride() {
 	sHue16 += deltams * beatsin88( 400, 5, 9 );
 	uint16_t brightnesstheta16 = sPseudotime;
 
-	for( uint16_t i = 0; i < NUM_LEDS; i++ ) {
+	for( uint16_t i = 0; i < numLeds; i++ ) {
 		hue16 += hueinc16;
 		uint8_t hue8 = hue16 / 256;
 
@@ -1778,7 +1811,7 @@ void pride() {
 		CRGB newcolor = CHSV( hue8, sat8, bri8 );
 
 		uint16_t pixelnumber = i;
-		pixelnumber = ( NUM_LEDS - 1 ) - pixelnumber;
+		pixelnumber = ( numLeds - 1 ) - pixelnumber;
 
 		nblend( leds[pixelnumber], newcolor, 64 );
 	}
@@ -1798,12 +1831,12 @@ void heatMap( CRGBPalette16 palette, bool up ) {
 	byte colorindex;
 
 	// Step 1.  Cool down every cell a little
-	for( uint16_t i = 0; i < NUM_LEDS; i++ ) {
-		heat[i] = qsub8( heat[i], random8( 0, ( ( cooling * 10 ) / NUM_LEDS ) + 2 ) );
+	for( uint16_t i = 0; i < numLeds; i++ ) {
+		heat[i] = qsub8( heat[i], random8( 0, ( ( cooling * 10 ) / numLeds ) + 2 ) );
 	}
 
 	// Step 2.  Heat from each cell drifts 'up' and diffuses a little
-	for( uint16_t k = NUM_LEDS - 1; k >= 2; k-- ) {
+	for( int k = numLeds - 1; k >= 2; k-- ) {
 		heat[k] = ( heat[k - 1] + heat[k - 2] + heat[k - 2] ) / 3;
 	}
 
@@ -1814,7 +1847,7 @@ void heatMap( CRGBPalette16 palette, bool up ) {
 	}
 
 	// Step 4.  Map from heat cells to LED colors
-	for( uint16_t j = 0; j < NUM_LEDS; j++ ) {
+	for( uint16_t j = 0; j < numLeds; j++ ) {
 		// Scale the heat value from 0-255 down to 0-240
 		// for best results with color palettes.
 		colorindex = scale8( heat[j], 190 );
@@ -1824,14 +1857,14 @@ void heatMap( CRGBPalette16 palette, bool up ) {
 		if( up ) {
 			leds[j] = color;
 		} else {
-			leds[( NUM_LEDS - 1 ) - j] = color;
+			leds[( numLeds - 1 ) - j] = color;
 		}
 	}
 }
 
 void addGlitter( uint8_t chanceOfGlitter ) {
 	if( random8() < chanceOfGlitter ) {
-		leds[random16( NUM_LEDS )] += CRGB::White;
+		leds[random16( numLeds )] += CRGB::White;
 	}
 }
 
@@ -1853,7 +1886,7 @@ uint8_t beatsaw8( accum88 beats_per_minute, uint8_t lowest = 0, uint8_t highest 
 	return result;
 }
 
-void colorWaves() { colorwaves( leds, NUM_LEDS, gCurrentPalette ); }
+void colorWaves() { colorwaves( leds, numLeds, gCurrentPalette ); }
 
 // ColorWavesWithPalettes by Mark Kriegsman: https://gist.github.com/kriegsman/8281905786e8b2632aeb
 // This function draws color waves with an ever-changing,
@@ -1913,7 +1946,7 @@ void colorwaves( CRGB* ledarray, uint16_t numleds, CRGBPalette16& palette ) {
 void palettetest( CRGB* ledarray, uint16_t numleds, const CRGBPalette16& gCurrentPalette ) {
 	static uint8_t startindex = 0;
 	startindex--;
-	fill_palette( ledarray, numleds, startindex, ( 256 / NUM_LEDS ) + 1, gCurrentPalette, 255, LINEARBLEND );
+	fill_palette( ledarray, numleds, startindex, ( 256 / numleds ) + 1, gCurrentPalette, 255, LINEARBLEND );
 }
 
 void radialPaletteShift() {
@@ -1975,8 +2008,9 @@ void decayingOrbits() {
 			if( pos != 255 )
 				pos--;
 
-			if( pos != 255 )
-				leds[NUM_LEDS - pos] = ColorFromPalette( gCurrentPalette, ( 255 / count ) * i );
+			// pos runs 254..0 - only the last NUM_LEDS steps are on the lamp (was an out-of-bounds write)
+			if( pos < NUM_LEDS )
+				leds[NUM_LEDS - 1 - pos] = ColorFromPalette( gCurrentPalette, ( 255 / count ) * i );
 
 			positions[i] = pos;
 		}

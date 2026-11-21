@@ -48,7 +48,7 @@ void setPixelDirection( uint16_t i, bool dir ) {
 }
 
 void brightenOrDarkenEachPixel( fract8 fadeUpAmount, fract8 fadeDownAmount ) {
-	for( uint16_t i = 0; i < NUM_LEDS; i++ ) {
+	for( uint16_t i = 0; i < numLeds; i++ ) {
 		if( getPixelDirection( i ) == GETTING_DARKER ) {
 			// This pixel is getting darker
 			leds[i] = makeDarker( leds[i], fadeDownAmount );
@@ -76,7 +76,7 @@ void colortwinkles() {
 
 		// Now consider adding a new random twinkle
 		if( random8() < DENSITY ) {
-			int pos = random16( NUM_LEDS );
+			int pos = random16( numLeds );
 			if( !leds[pos] ) {
 				leds[pos] = ColorFromPalette( gCurrentPalette, random8(), STARTING_BRIGHTNESS, NOBLEND );
 				setPixelDirection( pos, GETTING_BRIGHTER );

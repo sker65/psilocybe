@@ -27,7 +27,7 @@ function renderInfo(d) {
   var rows = [
     ["Firmware", d.version + " (" + d.build + ")"],
     ["LED data pin", d.dataPin + " (GPIO" + d.dataGpio + ")"],
-    ["LEDs", d.numLeds + " × " + d.ledType + ", " + d.colorOrder],
+    ["LEDs", d.numLeds + " of max. " + d.maxLeds + " × " + d.ledType + ", " + d.colorOrder],
     ["Max. current", d.maxMilliAmps + " mA"],
     ["Hostname", d.hostname],
     ["IP / MAC", d.ip + " / " + d.mac],
@@ -62,6 +62,8 @@ function loadInfo(fillForm) {
       renderInfo(d);
       renderMqttStatus(d);
       if (fillForm) {
+        $("#numLeds").val(d.numLeds).attr("max", d.maxLeds);
+        $("#maxLeds").text(d.maxLeds);
         $("#mqttEnabled").prop("checked", d.mqttEnabled != 0);
         $("#mqttDiscovery").prop("checked", d.mqttDiscovery != 0);
         $("#mqttServer").val(d.mqttServer).attr("maxlength", d.mqttServerMaxLen);
@@ -212,4 +214,20 @@ $(document).ready(function () {
     saveMqtt();
   });
   $("#fwUpload").click(uploadFirmware);
+
+  $("#ledForm").on("submit", function (e) {
+    e.preventDefault();
+    var max = info ? info.maxLeds : 241;
+    var n = parseInt($("#numLeds").val(), 10);
+    if (!(n >= 1 && n <= max)) {
+      showAlert("#ledAlert", "warning", "Please enter a number between 1 and " + max + ".");
+      return;
+    }
+    postValue("numLeds", n)
+      .done(function (value) {
+        showAlert("#ledAlert", "success", "Saved: " + value + " LEDs.", true);
+        loadInfo(false);
+      })
+      .fail(function () { showAlert("#ledAlert", "danger", "Saving failed."); });
+  });
 });
