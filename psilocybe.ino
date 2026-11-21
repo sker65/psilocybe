@@ -16,7 +16,10 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-// #define FASTLED_ALLOW_INTERRUPTS 0
+// Send each frame without interruption (~30us per LED). With interrupts allowed, FastLED aborts a frame
+// as soon as an interrupt (WiFi) takes longer than ~45us; without retries the rest of the strip keeps its
+// old colors - e.g. the twinkle effects froze and only the first LED changed.
+#define FASTLED_ALLOW_INTERRUPTS 0
 #define FASTLED_INTERRUPT_RETRY_COUNT 0
 #include <FastLED.h>
 FASTLED_USING_NAMESPACE
@@ -47,7 +50,7 @@ extern "C" {
 
 #include "Field.h"
 
-#define VERSION "0.6"
+#define VERSION "0.6.1"
 
 #define STRINGIFY_( x ) #x
 #define STRINGIFY( x ) STRINGIFY_( x )
