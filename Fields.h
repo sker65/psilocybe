@@ -54,12 +54,10 @@ String getPatterns() {
 String getPalette() { return String( currentPaletteIndex ); }
 
 String getPalettes() {
-	String json = "";
+	String json = "\"Auto\"";
 
 	for( uint8_t i = 0; i < paletteCount; i++ ) {
-		json += "\"" + paletteNames[i] + "\"";
-		if( i < paletteCount - 1 )
-			json += ",";
+		json += ",\"" + paletteNames[i] + "\"";
 	}
 
 	return json;

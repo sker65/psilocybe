@@ -58,7 +58,9 @@ The lamp implements the Home Assistant **MQTT JSON schema** light, including tra
 (e.g. used by integrations like Chameleon that fade colors).
 
 Either enable *Home Assistant auto discovery* on the Config page, or configure it in YAML
-(replace the prefix `psilocybe/psilo1/` by yours):
+(replace the prefix `psilocybe/psilo1/` by yours). Discovery also creates the entities *Speed*, *Autoplay*,
+*Autoplay duration* and *Palette* on the same device.
+
 ````
 mqtt:
   light:
@@ -81,15 +83,16 @@ Topics (all below the configured prefix):
   `{"state":"OFF","transition":5}` or `{"effect":"Pride"}`. `transition` is in seconds; brightness and
   (in *Solid Color*) the color fade, effects switch immediately. A color without effect switches to *Solid Color*.
 - `state`: JSON state (retained) with the Home Assistant keys `state`, `brightness`, `color_mode`, `color`,
-  `effect` plus `power`, `solidColor`, `pattern`, `palette`, `speed`, `autoplay`, `autoplayDuration`.
+  `effect` plus `power`, `solidColor`, `pattern`, `palette`, `paletteName`, `speed`, `autoplay`, `autoplayDuration`.
 - `availability`: `online` / `offline` (retained, last will).
-- `info`: version info on connect, e.g. `{ "clientId": "Psilocybe-xxxxxx", "IP": "x.x.x.x","version":"0.3" }`.
+- `info`: version info on connect, e.g. `{ "clientId": "Psilocybe-xxxxxx", "IP": "x.x.x.x","version":"0.4" }`.
 - `cmd/<action>`: single commands, kept for compatibility:
   - power: on|off
   - brightness: 0..255
   - autoplay: 0|1
   - autoplayDuration: duration of autoplay for one effect
-  - palette: palette index
+  - palette: 0 = Auto (palettes rotate), 1..8 = fixed palette
+  - paletteName: Auto, Rainbow, Rainbow Stripe, Cloud, Lava, Ocean, Forest, Party, Heat
   - pattern: effect pattern index
   - speed: 1..255
   - solidcolor: hexstring for color, format #RRGGBB

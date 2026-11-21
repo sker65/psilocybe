@@ -47,7 +47,7 @@ extern "C" {
 
 #include "Field.h"
 
-#define VERSION "0.3"
+#define VERSION "0.4"
 
 #define STRINGIFY_( x ) #x
 #define STRINGIFY( x ) STRINGIFY_( x )
@@ -92,6 +92,7 @@ String hostname;
 #define EEPROM_MQTT_SERVER 20
 #define EEPROM_MQTT_PREFIX 40
 #define EEPROM_MQTT_DISCOVERY 10 // 0xAB = Home Assistant discovery enabled
+#define EEPROM_PALETTE_SETTING 11 // 0 = auto, 1..paletteCount = fixed palette (EEPROM_PALETTE is unused)
 // server string (length byte + chars) must end before EEPROM_MQTT_PREFIX
 #define MQTT_SERVER_MAX_LEN ( EEPROM_MQTT_PREFIX - EEPROM_MQTT_SERVER - 1 )
 #define MQTT_PREFIX_MAX_LEN 64
@@ -146,6 +147,7 @@ uint8_t mqttEnabled = 0;
 uint8_t autoplayDuration = 10;
 unsigned long autoPlayTimeout = 0;
 
+// 0 = auto (palettes rotate), 1..paletteCount = fixed palette palettes[currentPaletteIndex - 1]
 uint8_t currentPaletteIndex = 0;
 
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
@@ -455,16 +457,51 @@ void handleJsonCommand( byte* payload, unsigned int length ) {
 
 String mqttTopic( const char* postfix ) { return mqttPrefix + postfix; }
 
-String discoveryTopic() {
+String deviceId() {
 	String id = hostname;
 	id.toLowerCase();
-	return "homeassistant/light/" + id + "/light/config";
+	return id;
+}
+
+String discoveryTopic( const char* component, const char* object ) {
+	return String( "homeassistant/" ) + component + "/" + deviceId() + "/" + object + "/config";
+}
+
+// entities published via Home Assistant discovery: { component, object id }
+const char* const discoveryEntities[][2] = {
+    { "light", "light" },
+    { "number", "speed" },
+    { "switch", "autoplay" },
+    { "number", "autoplay_duration" },
+    { "select", "palette" },
+};
+
+void publishRetained( const String& topic, const String& payload ) {
+	// streamed, discovery configs can be larger than the MQTT buffer
+	mqtt_client.beginPublish( topic.c_str(), payload.length(), true );
+	mqtt_client.print( payload );
+	mqtt_client.endPublish();
+}
+
+// common part of the extra entities (speed, autoplay, ...): state from the JSON state topic
+String discoveryEntityJson( const char* object, const char* name, const char* icon, const char* cmd,
+                            const char* stateKey ) {
+	String id = deviceId();
+	String json = "{";
+	json += "\"name\":\"" + String( name ) + "\"";
+	json += ",\"unique_id\":\"" + id + "_" + object + "\"";
+	json += ",\"icon\":\"" + String( icon ) + "\"";
+	json += ",\"command_topic\":\"" + jsonEscape( mqttTopic( "cmd/" ) + cmd ) + "\"";
+	json += ",\"state_topic\":\"" + jsonEscape( mqttTopic( "state" ) ) + "\"";
+	json += ",\"value_template\":\"{{ value_json." + String( stateKey ) + " }}\"";
+	json += ",\"availability_topic\":\"" + jsonEscape( mqttTopic( "availability" ) ) + "\"";
+	json += ",\"device\":{\"identifiers\":[\"" + id + "\"]}";
+	return json; // caller adds the type specific keys and the closing brace
 }
 
 // Home Assistant MQTT discovery (JSON schema light)
 void publishDiscovery() {
-	String id = hostname;
-	id.toLowerCase();
+	String id = deviceId();
 
 	String effects = "";
 	for( uint8_t i = 0; i < patternCount; i++ ) {
@@ -501,18 +538,40 @@ void publishDiscovery() {
 	json += ",\"configuration_url\":\"http://" + WiFi.localIP().toString() + "/\"}";
 	json += "}";
 
-	String topic = discoveryTopic();
-	// streamed, the config is larger than the MQTT buffer
-	mqtt_client.beginPublish( topic.c_str(), json.length(), true );
-	mqtt_client.print( json );
-	mqtt_client.endPublish();
-	Serial.println( "MQTT discovery published (" + String( json.length() ) + " bytes)" );
+	publishRetained( discoveryTopic( "light", "light" ), json );
+
+	json = discoveryEntityJson( "speed", "Speed", "mdi:speedometer", "speed", "speed" );
+	json += ",\"min\":1,\"max\":255,\"step\":1,\"mode\":\"slider\"}";
+	publishRetained( discoveryTopic( "number", "speed" ), json );
+
+	json = discoveryEntityJson( "autoplay", "Autoplay", "mdi:shuffle-variant", "autoplay", "autoplay" );
+	json += ",\"payload_on\":\"1\",\"payload_off\":\"0\"}";
+	publishRetained( discoveryTopic( "switch", "autoplay" ), json );
+
+	json = discoveryEntityJson( "autoplay_duration", "Autoplay duration", "mdi:timer-outline", "autoplayDuration",
+	                            "autoplayDuration" );
+	json += ",\"min\":1,\"max\":255,\"step\":1,\"mode\":\"box\",\"unit_of_measurement\":\"s\"}";
+	publishRetained( discoveryTopic( "number", "autoplay_duration" ), json );
+
+	json = discoveryEntityJson( "palette", "Palette", "mdi:palette", "paletteName", "paletteName" );
+	json += ",\"options\":[";
+	for( uint8_t i = 0; i <= paletteCount; i++ ) {
+		if( i > 0 )
+			json += ",";
+		json += "\"" + jsonEscape( paletteName( i ) ) + "\"";
+	}
+	json += "]}";
+	publishRetained( discoveryTopic( "select", "palette" ), json );
+
+	Serial.println( "MQTT discovery published" );
 }
 
 void removeDiscovery() {
 	if( mqtt_client.connected() ) {
-		String topic = discoveryTopic();
-		mqtt_client.publish( topic.c_str(), "", true );
+		for( auto& entity : discoveryEntities ) {
+			String topic = discoveryTopic( entity[0], entity[1] );
+			mqtt_client.publish( topic.c_str(), "", true );
+		}
 	}
 }
 
@@ -547,6 +606,9 @@ void mqtt_callback( char* topic, byte* payload, unsigned int length ) {
 		}
 		if( strcmp( topic + len, "pattern" ) == 0 ) {
 			setPattern( value.toInt() );
+		}
+		if( strcmp( topic + len, "paletteName" ) == 0 ) {
+			setPaletteName( value );
 		}
 		if( strcmp( topic + len, "palette" ) == 0 ) {
 			setPalette( value.toInt() );
@@ -796,6 +858,7 @@ void setup() {
 	webServer.on( "/speed", HTTP_POST, []() {
 		String value = webServer.arg( "value" );
 		setSpeed( value.toInt() );
+		sendInt( speed );
 	} );
 
 	webServer.on( "/twinkleSpeed", HTTP_POST, []() {
@@ -1009,9 +1072,8 @@ void broadcastString( String name, String value ) {
 }
 
 void setSpeed( uint8_t value ) {
-	speed = value;
+	speed = value < 1 ? 1 : value;
 	broadcastInt( "speed", speed );
-	sendInt( speed );
 	publish_state();
 }
 
@@ -1054,7 +1116,7 @@ void loop() {
 
 	// change to a new cpt-city gradient palette secondsPerPalette=10 (fix)
 	// EVERY_N_SECONDS( secondsPerPalette )
-	if( now > speedTime2 ) {
+	if( currentPaletteIndex == 0 && now > speedTime2 ) {
 		speedTime2 = now + ( ( 255 - speed ) >> 2 ) * 1000; // between 0 and 64 sec switch time
 		gCurrentPaletteNumber = addmod8( gCurrentPaletteNumber, 1, gGradientPaletteCount );
 		gTargetPalette = gGradientPalettes[gCurrentPaletteNumber];
@@ -1146,11 +1208,10 @@ void loadSettings() {
 	autoplay = EEPROM.read( EEPROM_AUTOPLAY );
 	autoplayDuration = EEPROM.read( EEPROM_AUTOPLAY_DURATION );
 
-	currentPaletteIndex = EEPROM.read( EEPROM_PALETTE );
-	if( currentPaletteIndex < 0 )
+	currentPaletteIndex = EEPROM.read( EEPROM_PALETTE_SETTING );
+	if( currentPaletteIndex > paletteCount ) // never written (0xFF)
 		currentPaletteIndex = 0;
-	else if( currentPaletteIndex >= paletteCount )
-		currentPaletteIndex = paletteCount - 1;
+	applyPaletteSetting();
 
 	// check if mqtt setting where ever written
 	if( EEPROM.read( EEPROM_MQTT_ENABLED ) == 0xAB ) { // magic number
@@ -1183,6 +1244,7 @@ void publish_state() {
 		json += ",\"autoplay\":" + String( autoplay ) + ",\"autoplayDuration\":" + String( autoplayDuration );
 		json += ",\"solidColor\":\"" + hexstringFromCRGB( c ) + "\"";
 		json += ",\"pattern\":" + String( currentPatternIndex ) + ",\"palette\":" + String( currentPaletteIndex );
+		json += ",\"paletteName\":\"" + jsonEscape( paletteName( currentPaletteIndex ) ) + "\"";
 		json += ",\"speed\":" + String( speed ) + "}";
 		int l = json.length();
 		Serial.println( "MQTT msg: " + json + ", len: " + l );
@@ -1260,6 +1322,7 @@ void adjustPattern( bool up ) {
 	}
 
 	broadcastInt( "pattern", currentPatternIndex );
+	publish_state(); // autoplay: keep the effect in Home Assistant up to date
 }
 
 void setPattern( uint8_t value ) {
@@ -1286,13 +1349,26 @@ void setPatternName( String name ) {
 	}
 }
 
+String paletteName( uint8_t index ) { return index == 0 ? String( "Auto" ) : paletteNames[index - 1]; }
+
+// a fixed palette replaces the rotating ones (blended smoothly in loop)
+void applyPaletteSetting() {
+	if( currentPaletteIndex > 0 ) {
+		targetPalette = palettes[currentPaletteIndex - 1];
+		gTargetPalette = palettes[currentPaletteIndex - 1];
+	} else {
+		speedTime2 = 0; // auto: continue rotating right away
+	}
+}
+
 void setPalette( uint8_t value ) {
-	if( value >= paletteCount )
-		value = paletteCount - 1;
+	if( value > paletteCount )
+		value = paletteCount;
 
 	currentPaletteIndex = value;
+	applyPaletteSetting();
 
-	EEPROM.write( EEPROM_PALETTE, currentPaletteIndex );
+	EEPROM.write( EEPROM_PALETTE_SETTING, currentPaletteIndex );
 	EEPROM.commit();
 
 	broadcastInt( "palette", currentPaletteIndex );
@@ -1300,8 +1376,8 @@ void setPalette( uint8_t value ) {
 }
 
 void setPaletteName( String name ) {
-	for( uint8_t i = 0; i < paletteCount; i++ ) {
-		if( paletteNames[i] == name ) {
+	for( uint8_t i = 0; i <= paletteCount; i++ ) {
+		if( paletteName( i ) == name ) {
 			setPalette( i );
 			break;
 		}
@@ -1578,7 +1654,7 @@ void confetti() {
 	fadeToBlackBy( leds, NUM_LEDS, 10 );
 	int pos = random16( NUM_LEDS );
 	// leds[pos] += CHSV( gHue + random8(64), 200, 255);
-	leds[pos] += ColorFromPalette( palettes[currentPaletteIndex], gHue + random8( 64 ) );
+	leds[pos] += ColorFromPalette( currentPalette, gHue + random8( 64 ) );
 }
 
 void sinelon() {
@@ -1586,7 +1662,7 @@ void sinelon() {
 	fadeToBlackBy( leds, NUM_LEDS, 20 );
 	int pos = beatsin16( speed, 0, NUM_LEDS );
 	static int prevpos = 0;
-	CRGB color = ColorFromPalette( palettes[currentPaletteIndex], gHue, 255 );
+	CRGB color = ColorFromPalette( currentPalette, gHue, 255 );
 	if( pos < prevpos ) {
 		fill_solid( leds + pos, ( prevpos - pos ) + 1, color );
 	} else {
@@ -1598,7 +1674,7 @@ void sinelon() {
 void bpm() {
 	// colored stripes pulsing at a defined Beats-Per-Minute (BPM)
 	uint8_t beat = beatsin8( speed, 64, 255 );
-	CRGBPalette16 palette = palettes[currentPaletteIndex];
+	CRGBPalette16 palette = currentPalette;
 	for( int i = 0; i < NUM_LEDS; i++ ) {
 		leds[i] = ColorFromPalette( palette, gHue + ( i * 2 ), beat - gHue + ( i * 10 ) );
 	}
