@@ -16,11 +16,11 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-// Send each frame without interruption (~30us per LED). With interrupts allowed, FastLED aborts a frame
-// as soon as an interrupt (WiFi) takes longer than ~45us; without retries the rest of the strip keeps its
-// old colors - e.g. the twinkle effects froze and only the first LED changed.
-#define FASTLED_ALLOW_INTERRUPTS 0
-#define FASTLED_INTERRUPT_RETRY_COUNT 0
+// Interrupts stay allowed while sending a frame (~30us per LED, 7ms for 241 LEDs), otherwise WiFi and the
+// web server get sluggish. FastLED aborts a frame when an interrupt takes longer than ~45us; the retries
+// send it again - without them the rest of the strip kept its old colors (frozen twinkles).
+// (FASTLED_ALLOW_INTERRUPTS is left undefined = 1; defining it as 1 breaks the FastLED 3.6 ESP8266 build)
+#define FASTLED_INTERRUPT_RETRY_COUNT 3
 #include <FastLED.h>
 FASTLED_USING_NAMESPACE
 
@@ -50,7 +50,7 @@ extern "C" {
 
 #include "Field.h"
 
-#define VERSION "0.6.1"
+#define VERSION "0.7"
 
 #define STRINGIFY_( x ) #x
 #define STRINGIFY( x ) STRINGIFY_( x )
@@ -74,12 +74,17 @@ String hostname;
 // web UI, generated from web/ by tools/embed_web.py at build time
 #include "web_assets.h"
 
-#define DATA_PIN D4 // was D5
+// default data pin (strip: D4, original ring lamp: D5); selectable on the config page, stored in the EEPROM
+#define DATA_PIN D4
 #define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
 // NUM_LEDS: maximum / geometry of the original lamp (9 concentric rings, see Disk.h, Map.h).
 // The number of LEDs actually connected (numLeds) is set on the config page.
 #define NUM_LEDS 241
+
+// max. frame rate (10ms = 100 fps, about what the original firmware reached with 241 LEDs). Leaves time for
+// WiFi and the web server between frames; effects like Confetti depend on the frame rate.
+#define FRAME_INTERVAL_MS 10
 
 #define MILLI_AMPS 4000 // IMPORTANT: set the max milli-Amps of your power supply (4A = 4000mA)
 
@@ -102,6 +107,8 @@ String hostname;
 #define EEPROM_COOLING 13
 #define EEPROM_SPARKING 14
 #define EEPROM_FIRE_VALID 15 // 0xAB = cooling/sparking have been saved
+#define EEPROM_DATA_PIN 16 // GPIO number
+#define EEPROM_DATA_PIN_VALID 17 // 0xAB = data pin has been saved
 // server string (length byte + chars) must end before EEPROM_MQTT_PREFIX
 #define MQTT_SERVER_MAX_LEN ( EEPROM_MQTT_PREFIX - EEPROM_MQTT_SERVER - 1 )
 #define MQTT_PREFIX_MAX_LEN 64
@@ -112,6 +119,17 @@ String hostname;
 
 CRGB leds[NUM_LEDS];
 uint8_t numLeds = NUM_LEDS; // LEDs actually connected, 1..NUM_LEDS
+
+// selectable data pins: GPIO number (FastLED uses raw GPIO numbers for the d1_mini board) and D1 mini name.
+// D3 (GPIO0) and D8 (GPIO15) are left out, they select the boot mode.
+struct PinOption {
+	uint8_t gpio;
+	const char* name;
+};
+const PinOption dataPinOptions[] = { { D1, "D1" }, { D2, "D2" }, { D4, "D4" },
+                                     { D5, "D5" }, { D6, "D6" }, { D7, "D7" } };
+uint8_t dataPin = DATA_PIN;
+unsigned long restartAt = 0; // > 0: restart at this millis() (after a setting that needs it)
 
 const uint8_t brightnessCount = 5;
 uint8_t brightnessMap[brightnessCount] = { 16, 32, 64, 128, 255 };
@@ -706,8 +724,10 @@ void setup() {
 	delay( 100 );
 	Serial.setDebugOutput( true );
 
-	FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>( leds, NUM_LEDS ); // for WS2812 (Neopixel)
-	// FastLED.addLeds<LED_TYPE,DATA_PIN,CLK_PIN,COLOR_ORDER>(leds, NUM_LEDS); // for APA102 (Dotstar)
+	// the data pin is needed before the LEDs can be set up, so read the EEPROM early
+	EEPROM.begin( 512 );
+	dataPin = loadDataPin();
+	addLedController( dataPin );
 	FastLED.setDither( false );
 	FastLED.setCorrection( TypicalLEDStrip );
 	FastLED.setBrightness( brightness );
@@ -727,7 +747,6 @@ void setup() {
 
 	setupRings();
 
-	EEPROM.begin( 512 );
 	loadSettings();
 	FastLED[0].setLeds( leds, numLeds );
 	// callback always, so commands also work when MQTT gets enabled later via the web UI
@@ -795,6 +814,7 @@ void setup() {
 		Serial.println( "\nOTA End" );
 		fill_solid( leds, NUM_LEDS, CRGB::Green );
 		FastLED.show();
+		delay( 1000 ); // show the success for a moment, the lamp restarts right after
 	} );
 	ArduinoOTA.onProgress( []( unsigned int progress, unsigned int total ) {
 		fill_solid( leds, (int)( numLeds * ( (float)progress / (float)total ) ), CRGB::Blue );
@@ -934,6 +954,20 @@ void setup() {
 		sendString( value );
 	} );
 
+	webServer.on( "/dataPin", HTTP_POST, []() {
+		int gpio = webServer.arg( "value" ).toInt();
+		if( !dataPinName( gpio ) ) {
+			webServer.send( 400, "text/plain", "invalid pin" );
+			return;
+		}
+		EEPROM.write( EEPROM_DATA_PIN, gpio );
+		EEPROM.write( EEPROM_DATA_PIN_VALID, 0xAB );
+		EEPROM.commit();
+		sendString( dataPinName( gpio ) );
+		if( gpio != dataPin )
+			restartAt = millis() + 1000; // FastLED cannot change the pin at runtime
+	} );
+
 	webServer.on( "/numLeds", HTTP_POST, []() {
 		setNumLeds( webServer.arg( "value" ).toInt() );
 		sendInt( numLeds );
@@ -1006,7 +1040,8 @@ bool serveWebAsset( String path ) {
 			continue;
 		// no-cache + ETag: the browser revalidates every time and gets a cheap 304 unless the
 		// firmware (and with it the UI) changed
-		webServer.sendHeader( "Cache-Control", "no-cache" );
+		// libraries do not change between updates: cached for a day; own files are revalidated every time
+		webServer.sendHeader( "Cache-Control", asset.immutable ? "max-age=86400" : "no-cache" );
 		webServer.sendHeader( "ETag", asset.etag );
 		if( webServer.header( "If-None-Match" ) == asset.etag ) {
 			webServer.send( 304 );
@@ -1041,8 +1076,15 @@ String getInfoJson() {
 	String json = "{";
 	json += "\"version\":\"" VERSION "\"";
 	json += ",\"build\":\"" __DATE__ " " __TIME__ "\"";
-	json += ",\"dataPin\":\"" STRINGIFY( DATA_PIN ) "\"";
-	json += ",\"dataGpio\":" + String( DATA_PIN );
+	json += ",\"dataPin\":\"" + String( dataPinName( dataPin ) ) + "\"";
+	json += ",\"dataGpio\":" + String( dataPin );
+	json += ",\"dataPinOptions\":[";
+	for( size_t i = 0; i < ARRAY_SIZE( dataPinOptions ); i++ ) {
+		if( i > 0 )
+			json += ",";
+		json += "{\"gpio\":" + String( dataPinOptions[i].gpio ) + ",\"name\":\"" + dataPinOptions[i].name + "\"}";
+	}
+	json += "]";
 	json += ",\"ledType\":\"" STRINGIFY( LED_TYPE ) "\"";
 	json += ",\"colorOrder\":\"" STRINGIFY( COLOR_ORDER ) "\"";
 	json += ",\"numLeds\":" + String( numLeds );
@@ -1093,6 +1135,11 @@ void setSpeed( uint8_t value ) {
 void loop() {
 	ArduinoOTA.handle();
 
+	if( restartAt && millis() > restartAt ) {
+		Serial.println( "Restarting" );
+		ESP.restart();
+	}
+
 	// do not continue if OTA update is in progress
 	// OTA callbacks drive the LED display mode and OTA progress
 	// in the background, the above call to LED.process() ensures
@@ -1111,6 +1158,12 @@ void loop() {
 	}
 	if( mqttEnabled && mqtt_client.connected() )
 		mqtt_client.loop();
+
+	// frame rate limit
+	static unsigned long lastFrame = 0;
+	if( millis() - lastFrame < FRAME_INTERVAL_MS )
+		return;
+	lastFrame = millis();
 
 	updateTransitions();
 
@@ -1261,6 +1314,50 @@ void setSparking( int value ) {
 	sparking = constrain( value, 0, 255 );
 	saveFireSettings();
 	broadcastInt( "sparking", sparking );
+}
+
+// ---- data pin ----
+
+const char* dataPinName( int gpio ) {
+	for( auto& option : dataPinOptions ) {
+		if( option.gpio == gpio )
+			return option.name;
+	}
+	return nullptr;
+}
+
+uint8_t loadDataPin() {
+	if( EEPROM.read( EEPROM_DATA_PIN_VALID ) == 0xAB ) {
+		uint8_t gpio = EEPROM.read( EEPROM_DATA_PIN );
+		if( dataPinName( gpio ) )
+			return gpio;
+	}
+	return DATA_PIN;
+}
+
+// FastLED needs the pin as template parameter, so one instantiation per selectable pin
+void addLedController( uint8_t gpio ) {
+	switch( gpio ) {
+	case D1:
+		FastLED.addLeds<LED_TYPE, D1, COLOR_ORDER>( leds, NUM_LEDS );
+		break;
+	case D2:
+		FastLED.addLeds<LED_TYPE, D2, COLOR_ORDER>( leds, NUM_LEDS );
+		break;
+	case D5:
+		FastLED.addLeds<LED_TYPE, D5, COLOR_ORDER>( leds, NUM_LEDS );
+		break;
+	case D6:
+		FastLED.addLeds<LED_TYPE, D6, COLOR_ORDER>( leds, NUM_LEDS );
+		break;
+	case D7:
+		FastLED.addLeds<LED_TYPE, D7, COLOR_ORDER>( leds, NUM_LEDS );
+		break;
+	case D4:
+	default:
+		FastLED.addLeds<LED_TYPE, D4, COLOR_ORDER>( leds, NUM_LEDS );
+		break;
+	}
 }
 
 // number of LEDs actually connected, takes effect immediately

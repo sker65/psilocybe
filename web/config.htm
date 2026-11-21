@@ -59,9 +59,17 @@
           </div>
           <button type="submit" class="btn btn-primary">Save</button>
         </form>
+        <form id="pinForm" class="form-inline" style="margin-top: 10px">
+          <div class="form-group">
+            <label for="dataPin">Data pin</label>
+            <select class="form-control" id="dataPin" style="width: 100px"></select>
+          </div>
+          <button type="submit" class="btn btn-default">Save &amp; restart</button>
+        </form>
         <p class="help-block" style="margin-bottom: 0">LEDs actually connected (max. <span id="maxLeds">241</span>,
           the original lamp with 9 rings). Tip: switch to <em>Solid Color</em> to check that all LEDs light up.
-          Ring and XY effects are designed for the original lamp and only show the part that is connected.</p>
+          Ring and XY effects are designed for the original lamp and only show the part that is connected.
+          Data pin: strip D4, original ring lamp D5; changing it restarts the lamp.</p>
         <div id="ledAlert" class="alert" style="display: none; margin: 15px 0 0 0;"></div>
       </div>
     </div>

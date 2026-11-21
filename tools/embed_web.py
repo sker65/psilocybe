@@ -65,6 +65,7 @@ def generate():
         "\tconst uint8_t* data; // gzip-compressed, PROGMEM",
         "\tsize_t length;",
         "\tconst char* etag;",
+        "\tbool immutable; // third party library / font / image: may be cached by the browser",
         "};",
         "",
     ]
@@ -81,7 +82,9 @@ def generate():
         out.append("static const uint8_t webAssetData%d[] PROGMEM = {" % idx)
         out.append(c_bytes(packed))
         out.append("};")
-        table.append('\t{ "%s", "%s", webAssetData%d, %d, "\\"%s\\"" },' % (url, mime, idx, len(packed), etag))
+        immutable = ".min." in url or url.startswith(("/fonts/", "/images/")) or url == "/favicon.ico"
+        table.append('\t{ "%s", "%s", webAssetData%d, %d, "\\"%s\\"", %s },'
+                     % (url, mime, idx, len(packed), etag, "true" if immutable else "false"))
     out.append("")
     out.append("static const WebAsset webAssets[] = {")
     out.extend(table)

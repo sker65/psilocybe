@@ -22,8 +22,9 @@ The firmware also drives a plain LED strip: set the number of connected LEDs (1.
 Linear effects (Pride, Color Waves, Twinkles, Fire, Confetti, ...) then use exactly the connected LEDs, the ring
 and XY effects keep the geometry of the original lamp and show the part that is connected.
 
-Default wiring (compile time, see `psilocybe.ino`): WS2812B, GRB, data pin **D4** (GPIO2), power limit 4 A.
-The *Config* page shows these values read-only.
+LED type WS2812B (GRB) and the power limit of 4 A are set at compile time (`psilocybe.ino`). The data pin is
+selected on the *Config* page (D1, D2, D4, D5, D6, D7; default **D4**, the original ring lamp uses **D5**);
+changing it restarts the lamp.
 
 Firmware
 --------
@@ -62,7 +63,7 @@ The embedded webserver presents a nice UI to control the lamp. The UI is updated
 
 - *Mothership* (`/`): all settings, incl. fire (cooling, sparking) and twinkle parameters
 - *Simple* (`/simple.htm`): on/off, patterns and colors, made for phones
-- *Config* (`/config.htm`): device info (LED pin, versions, ...), number of LEDs, MQTT settings and firmware upload
+- *Config* (`/config.htm`): device info (versions, WiFi, ...), data pin and number of LEDs, MQTT settings and firmware upload
 
 <img src="./images/ui.jpg">
 
@@ -151,7 +152,7 @@ Topics (all below the configured prefix):
 - `state`: JSON state (retained) with the Home Assistant keys `state`, `brightness`, `color_mode`, `color`,
   `effect` plus `power`, `solidColor`, `pattern`, `palette`, `paletteName`, `speed`, `autoplay`, `autoplayDuration`.
 - `availability`: `online` / `offline` (retained, last will).
-- `info`: version info on connect, e.g. `{ "clientId": "Psilocybe-xxxxxx", "IP": "x.x.x.x","version":"0.6" }`.
+- `info`: version info on connect, e.g. `{ "clientId": "Psilocybe-xxxxxx", "IP": "x.x.x.x","version":"0.7" }`.
 - `cmd/<action>`: single commands:
   - power: on|off
   - brightness: 0..255
@@ -171,4 +172,4 @@ This firmware has some convenience features that were not part of the original f
   `.bin` on the *Config* page; firmware and web UI are always updated together
 - **WiFiManager**: if no wifi is configured or wifi not in reach, a self service access point is started, with UI to pick wifi network and enter password
 - **Persistent settings**: brightness, effect, color, palette, autoplay, fire parameters, number of LEDs and the
-  MQTT settings are stored in the EEPROM
+  MQTT settings and the data pin are stored in the EEPROM

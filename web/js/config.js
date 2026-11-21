@@ -63,6 +63,11 @@ function loadInfo(fillForm) {
       renderMqttStatus(d);
       if (fillForm) {
         $("#numLeds").val(d.numLeds).attr("max", d.maxLeds);
+        var pinSelect = $("#dataPin").empty();
+        (d.dataPinOptions || []).forEach(function (o) {
+          pinSelect.append($("<option>").val(o.gpio).text(o.name + " (GPIO" + o.gpio + ")"));
+        });
+        pinSelect.val(d.dataGpio);
         $("#maxLeds").text(d.maxLeds);
         $("#mqttEnabled").prop("checked", d.mqttEnabled != 0);
         $("#mqttDiscovery").prop("checked", d.mqttDiscovery != 0);
@@ -135,23 +140,24 @@ function setProgress(percent) {
 }
 
 // after an update the lamp reboots - poll until it answers again, then reload the page
-function waitForReboot(startedAt) {
+function waitForReboot(startedAt, alertId) {
+  alertId = alertId || "#fwAlert";
   setTimeout(function () {
     $.ajax({ url: "info", dataType: "json", timeout: 2000 })
       .done(function (d) {
         // rebooted = uptime is shorter than the time since the upload finished
         if (d.uptime * 1000 < Date.now() - startedAt + 5000) {
-          showAlert("#fwAlert", "success", "Update done, now running version " + d.version + ". Reloading...");
+          showAlert(alertId, "success", "The lamp is back (version " + d.version + "). Reloading...");
           setTimeout(function () { location.reload(); }, 1500);
         } else {
-          waitForReboot(startedAt);
+          waitForReboot(startedAt, alertId);
         }
       })
       .fail(function () {
         if (Date.now() - startedAt > 90000) {
-          showAlert("#fwAlert", "warning", "The lamp did not come back yet. Please reload the page in a moment.");
+          showAlert(alertId, "warning", "The lamp did not come back yet. Please reload the page in a moment.");
         } else {
-          waitForReboot(startedAt);
+          waitForReboot(startedAt, alertId);
         }
       });
   }, 3000);
@@ -214,6 +220,22 @@ $(document).ready(function () {
     saveMqtt();
   });
   $("#fwUpload").click(uploadFirmware);
+
+  $("#pinForm").on("submit", function (e) {
+    e.preventDefault();
+    var gpio = parseInt($("#dataPin").val(), 10);
+    if (info && gpio == info.dataGpio) {
+      showAlert("#ledAlert", "info", "Nothing changed.", true);
+      return;
+    }
+    postValue("dataPin", gpio)
+      .done(function (name) {
+        showAlert("#ledAlert", "info", "Data pin set to " + name + ", the lamp restarts...");
+        $("#status").text("Restarting...");
+        waitForReboot(Date.now(), "#ledAlert");
+      })
+      .fail(function () { showAlert("#ledAlert", "danger", "Saving failed."); });
+  });
 
   $("#ledForm").on("submit", function (e) {
     e.preventDefault();
