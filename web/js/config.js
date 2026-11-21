@@ -63,6 +63,7 @@ function loadInfo(fillForm) {
       renderMqttStatus(d);
       if (fillForm) {
         $("#mqttEnabled").prop("checked", d.mqttEnabled != 0);
+        $("#mqttDiscovery").prop("checked", d.mqttDiscovery != 0);
         $("#mqttServer").val(d.mqttServer).attr("maxlength", d.mqttServerMaxLen);
         $("#mqttPrefix").val(d.mqttPrefix).attr("maxlength", d.mqttPrefixMaxLen);
         $("#mqttServerMaxLen").text(d.mqttServerMaxLen);
@@ -82,6 +83,7 @@ function saveMqtt() {
   var server = $.trim($("#mqttServer").val());
   var prefix = $.trim($("#mqttPrefix").val());
   var enabled = $("#mqttEnabled").prop("checked");
+  var discovery = $("#mqttDiscovery").prop("checked");
 
   if (server.indexOf(":") >= 0) {
     showAlert("#mqttAlert", "warning", "Server must not contain a port number.");
@@ -101,6 +103,7 @@ function saveMqtt() {
   if (server != info.mqttServer) requests.push(["mqttServer", server]);
   if (prefix != info.mqttPrefix) requests.push(["mqttPrefix", prefix]);
   if (enabled != (info.mqttEnabled != 0)) requests.push(["mqttEnabled", enabled ? 1 : 0]);
+  if (discovery != (info.mqttDiscovery != 0)) requests.push(["mqttDiscovery", discovery ? 1 : 0]);
 
   if (requests.length == 0) {
     showAlert("#mqttAlert", "info", "Nothing changed.", true);

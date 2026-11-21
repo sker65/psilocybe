@@ -54,46 +54,46 @@ forces it off / on. Note that a Home Assistant instance served via https cannot 
 
 MQTT 
 ------------
-This is an example how the Psilocybe can be configured as a home assistant mqtt light device:
-````
-- name: 'Psilocybe'
-  state_topic: psilocybe/psilo1/state
-  state_value_template: '{{ json_value.power }}'
-  payload_on: 'on'
-  payload_off: 'off'
-  command_topic: psilocybe/psilo1/cmd/power
-  brightness_state_topic: psilocybe/psilo1/state
-  brightness_value_template: '{{json_value["brightness"]}}'
-  brightness_command_topic: psilocybe/psilo1/cmd/brightness
-  rgb_command_topic: psilocybe/psilo1/cmd/solidcolor
-  rgb_state_topic: psilocybe/psilo1/state
-  rgb_value_template: "{{ json_value.solidcolor[1:3] | int(base=16) ~ ',' ~ json_value.solidcolor[3:5] | int(base=16) ~ ',' ~ json_value.solidcolor[5:7] | int(base=16) }}"
-  effect_list: ['Pride', 'Color Waves']
-  effect_command_topic: psilocybe/psilo1/cmd/pattern
-  effect_state_topic: psilocybe/psilo1/state
-  effect_value_template: '{{json_value["pattern"]}}'
+The lamp implements the Home Assistant **MQTT JSON schema** light, including transitions
+(e.g. used by integrations like Chameleon that fade colors).
 
+Either enable *Home Assistant auto discovery* on the Config page, or configure it in YAML
+(replace the prefix `psilocybe/psilo1/` by yours):
 ````
-MQTT support in not completed yet, but all basic functions work already.
-
-MQTT is configureable you can set server name and prefix, and enable or diable support.
-
-Accepted commands are:
-    <ul>
-      <li>power: 0|1 to switch on and off</li>
-      <li>brightness: 0..255 to set brightness</li>
-      <li>autoplay: 0|1 to start/stop autoplay</li>
-      <li>palette: palette index</li>
-      <li>pattern: effect pattern index</li>
-      <li>autoplayDuration: duration of autoplay for one effect</li>
-      <li>solidcolor: hexstring for color. format #RRGGBB</li>
-    </ul>
-
-As soon as the device is online it publishs an info message on the topic
-&lt;topic&gt;/info with version infos for the firmware, e.g.:
+mqtt:
+  light:
+    - name: "Psilocybe"
+      schema: json
+      command_topic: "psilocybe/psilo1/set"
+      state_topic: "psilocybe/psilo1/state"
+      availability_topic: "psilocybe/psilo1/availability"
+      brightness: true
+      supported_color_modes: ["rgb"]
+      effect: true
+      effect_list: ["Pride", "Color Waves", "Solid Color"]   # any pattern names, see /all
+      transition: true
+      flash: false
 ````
-{ "clientId": "ESP8266Client-xxx", "IP": "x.x.x.x","version":"0.1" }
-````
+
+Topics (all below the configured prefix):
+
+- `set`: JSON command, e.g. `{"state":"ON","brightness":200,"color":{"r":255,"g":120,"b":0},"transition":2}`,
+  `{"state":"OFF","transition":5}` or `{"effect":"Pride"}`. `transition` is in seconds; brightness and
+  (in *Solid Color*) the color fade, effects switch immediately. A color without effect switches to *Solid Color*.
+- `state`: JSON state (retained) with the Home Assistant keys `state`, `brightness`, `color_mode`, `color`,
+  `effect` plus `power`, `solidColor`, `pattern`, `palette`, `speed`, `autoplay`, `autoplayDuration`.
+- `availability`: `online` / `offline` (retained, last will).
+- `info`: version info on connect, e.g. `{ "clientId": "Psilocybe-xxxxxx", "IP": "x.x.x.x","version":"0.3" }`.
+- `cmd/<action>`: single commands, kept for compatibility:
+  - power: on|off
+  - brightness: 0..255
+  - autoplay: 0|1
+  - autoplayDuration: duration of autoplay for one effect
+  - palette: palette index
+  - pattern: effect pattern index
+  - speed: 1..255
+  - solidcolor: hexstring for color, format #RRGGBB
+
 ## MQTT config
 
 <img src="./images/config-mqtt.jpg">

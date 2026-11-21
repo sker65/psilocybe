@@ -72,15 +72,23 @@
               autocapitalize="off" autocorrect="off" spellcheck="false">
             <p class="help-block">Must end with <code>/</code>. Use a different prefix for each lamp.</p>
           </div>
+          <div class="checkbox">
+            <label><input type="checkbox" id="mqttDiscovery"> Home Assistant auto discovery</label>
+            <p class="help-block">Creates the light in Home Assistant automatically (JSON schema, with transitions).
+              Leave off if the light is already configured in YAML, otherwise it shows up twice.</p>
+          </div>
           <button id="mqttSave" type="submit" class="btn btn-primary">Save</button>
         </form>
         <div id="mqttAlert" class="alert" style="display: none; margin: 15px 0 0 0;"></div>
 
         <hr>
         <p class="help-block" style="margin-bottom: 0">
-          Commands are received on <code>&lt;prefix&gt;cmd/&lt;action&gt;</code>, the state is published as JSON on
-          <code>&lt;prefix&gt;state</code>, device info on <code>&lt;prefix&gt;info</code>.<br>
-          Actions: <code>power</code> (on|off), <code>brightness</code> (0..255), <code>autoplay</code> (0|1),
+          <strong>Home Assistant JSON schema:</strong> commands on <code>&lt;prefix&gt;set</code>, e.g.
+          <code>{"state":"ON","brightness":200,"color":{"r":255,"g":120,"b":0},"transition":2}</code>
+          or <code>{"effect":"Pride"}</code>. State (retained) on <code>&lt;prefix&gt;state</code>,
+          <code>online</code>/<code>offline</code> on <code>&lt;prefix&gt;availability</code>.<br>
+          <strong>Single commands:</strong> <code>&lt;prefix&gt;cmd/&lt;action&gt;</code> with actions
+          <code>power</code> (on|off), <code>brightness</code> (0..255), <code>autoplay</code> (0|1),
           <code>autoplayDuration</code>, <code>pattern</code> (index), <code>palette</code> (index),
           <code>speed</code> (1..255), <code>solidcolor</code> (#RRGGBB).
         </p>

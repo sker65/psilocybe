@@ -36,14 +36,18 @@ extern "C" {
 
 #include "GradientPalettes.h"
 
-#define MQTT_MAX_PACKET_SIZE 256
+#include <ArduinoJson.h>
 #include <PubSubClient.h>
+
+// PubSubClient buffer for incoming commands and the state message (set at runtime,
+// a #define here would not reach the separately compiled library)
+#define MQTT_BUFFER_SIZE 1024
 
 #define ARRAY_SIZE( A ) ( sizeof( A ) / sizeof( ( A )[0] ) )
 
 #include "Field.h"
 
-#define VERSION "0.2"
+#define VERSION "0.3"
 
 #define STRINGIFY_( x ) #x
 #define STRINGIFY( x ) STRINGIFY_( x )
@@ -87,6 +91,7 @@ String hostname;
 #define EEPROM_MQTT_ENABLED 9
 #define EEPROM_MQTT_SERVER 20
 #define EEPROM_MQTT_PREFIX 40
+#define EEPROM_MQTT_DISCOVERY 10 // 0xAB = Home Assistant discovery enabled
 // server string (length byte + chars) must end before EEPROM_MQTT_PREFIX
 #define MQTT_SERVER_MAX_LEN ( EEPROM_MQTT_PREFIX - EEPROM_MQTT_SERVER - 1 )
 #define MQTT_PREFIX_MAX_LEN 64
@@ -146,6 +151,24 @@ uint8_t currentPaletteIndex = 0;
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 
 CRGB solidColor = CRGB::Blue;
+
+uint8_t mqttDiscovery = 0;
+// set while handling a JSON command, so the state is published only once at the end
+bool publishSuppressed = false;
+
+// ---- transitions (Home Assistant "transition") ----
+struct Fade {
+	bool active;
+	uint32_t start;
+	uint32_t duration;
+};
+Fade brightnessFade = { false, 0, 0 };
+uint8_t fadeFromBrightness = 0;
+uint8_t fadeToBrightness = 0;
+bool fadingOut = false; // power is already off, but the LEDs still fade to black
+Fade colorFade = { false, 0, 0 };
+CRGB fadeFromColor;
+CRGB fadeToColor;
 
 //// A UDP instance to let us send and receive packets over UDP
 // WiFiUDP udp;
@@ -304,6 +327,195 @@ int hexDigitToInt( char c ) {
 	return 0;
 }
 
+// ---- transitions ----
+
+// progress 0..255, marks the fade inactive when done
+uint8_t fadeProgress( Fade& fade, uint32_t now ) {
+	uint32_t elapsed = now - fade.start;
+	if( elapsed >= fade.duration ) {
+		fade.active = false;
+		return 255;
+	}
+	return (uint8_t)( ( (uint64_t)elapsed * 255 ) / fade.duration );
+}
+
+void startBrightnessFade( uint8_t from, uint8_t to, uint32_t durationMs ) {
+	fadeFromBrightness = from;
+	fadeToBrightness = to;
+	brightnessFade = { true, millis(), durationMs };
+	FastLED.setBrightness( from );
+}
+
+void startColorFade( CRGB from, CRGB to, uint32_t durationMs ) {
+	fadeFromColor = from;
+	fadeToColor = to;
+	colorFade = { true, millis(), durationMs };
+	solidColor = from;
+}
+
+void cancelBrightnessFade() {
+	brightnessFade.active = false;
+	fadingOut = false;
+	FastLED.setBrightness( brightness );
+}
+
+// the color the lamp is heading to (solidColor itself changes during a fade)
+CRGB targetSolidColor() { return colorFade.active ? fadeToColor : solidColor; }
+
+// called every loop
+void updateTransitions() {
+	uint32_t now = millis();
+	if( brightnessFade.active ) {
+		uint8_t p = fadeProgress( brightnessFade, now );
+		FastLED.setBrightness( lerp8by8( fadeFromBrightness, fadeToBrightness, p ) );
+		if( !brightnessFade.active ) {
+			fadingOut = false;
+			FastLED.setBrightness( brightness );
+		}
+	}
+	if( colorFade.active ) {
+		uint8_t p = fadeProgress( colorFade, now );
+		solidColor = blend( fadeFromColor, fadeToColor, p );
+	}
+}
+
+// ---- Home Assistant MQTT JSON schema ----
+// {"state":"ON","brightness":255,"color":{"r":255,"g":0,"b":0},"effect":"Pride","transition":2}
+void handleJsonCommand( byte* payload, unsigned int length ) {
+	JsonDocument doc;
+	DeserializationError err = deserializeJson( doc, (const char*)payload, length );
+	if( err ) {
+		Serial.print( "MQTT: invalid JSON: " );
+		Serial.println( err.c_str() );
+		return;
+	}
+
+	float transition = doc["transition"] | 0.0f;
+	if( transition < 0 )
+		transition = 0;
+	if( transition > 3600 )
+		transition = 3600;
+	uint32_t ms = (uint32_t)( transition * 1000 );
+
+	const char* state = doc["state"];
+	bool turnOff = state && strcasecmp( state, "OFF" ) == 0;
+	bool turnOn = state && strcasecmp( state, "ON" ) == 0;
+
+	publishSuppressed = true;
+
+	if( turnOff ) {
+		if( power ) {
+			uint8_t current = FastLED.getBrightness();
+			setPower( 0 );
+			if( ms > 0 ) {
+				fadingOut = true;
+				startBrightnessFade( current, 0, ms );
+			}
+		}
+	} else {
+		bool wasOn = power && !fadingOut;
+		// current output brightness, also when an ON interrupts a running fade-out
+		uint8_t fromBrightness = ( power || fadingOut ) ? FastLED.getBrightness() : 0;
+
+		if( turnOn && !power )
+			setPower( 1 );
+
+		// color first: it switches to the "Solid Color" pattern, an effect in the same command wins
+		JsonObject color = doc["color"];
+		if( !color.isNull() ) {
+			CRGB from = solidColor;
+			bool wasSolid = wasOn && currentPatternIndex == patternCount - 1;
+			CRGB to( color["r"] | 0, color["g"] | 0, color["b"] | 0 );
+			setSolidColor( to );
+			if( ms > 0 && wasSolid )
+				startColorFade( from, to, ms );
+		}
+
+		const char* effect = doc["effect"];
+		if( effect )
+			setPatternName( effect );
+
+		uint8_t toBrightness = brightness;
+		if( doc["brightness"].is<int>() )
+			toBrightness = constrain( doc["brightness"].as<int>(), 1, 255 );
+		if( toBrightness != brightness )
+			setBrightness( toBrightness );
+
+		if( power ) {
+			if( ms > 0 && fromBrightness != toBrightness )
+				startBrightnessFade( fromBrightness, toBrightness, ms );
+			else if( fadingOut || ( brightnessFade.active && ms == 0 ) )
+				cancelBrightnessFade();
+		}
+	}
+
+	publishSuppressed = false;
+	publish_state();
+}
+
+String mqttTopic( const char* postfix ) { return mqttPrefix + postfix; }
+
+String discoveryTopic() {
+	String id = hostname;
+	id.toLowerCase();
+	return "homeassistant/light/" + id + "/light/config";
+}
+
+// Home Assistant MQTT discovery (JSON schema light)
+void publishDiscovery() {
+	String id = hostname;
+	id.toLowerCase();
+
+	String effects = "";
+	for( uint8_t i = 0; i < patternCount; i++ ) {
+		bool duplicate = false;
+		for( uint8_t j = 0; j < i; j++ ) {
+			if( patterns[j].name == patterns[i].name ) {
+				duplicate = true;
+				break;
+			}
+		}
+		if( duplicate )
+			continue;
+		if( effects.length() )
+			effects += ",";
+		effects += "\"" + jsonEscape( patterns[i].name ) + "\"";
+	}
+
+	String json = "{";
+	json += "\"name\":null";
+	json += ",\"unique_id\":\"" + id + "_light\"";
+	json += ",\"schema\":\"json\"";
+	json += ",\"command_topic\":\"" + jsonEscape( mqttTopic( "set" ) ) + "\"";
+	json += ",\"state_topic\":\"" + jsonEscape( mqttTopic( "state" ) ) + "\"";
+	json += ",\"availability_topic\":\"" + jsonEscape( mqttTopic( "availability" ) ) + "\"";
+	json += ",\"brightness\":true";
+	json += ",\"supported_color_modes\":[\"rgb\"]";
+	json += ",\"effect\":true";
+	json += ",\"effect_list\":[" + effects + "]";
+	json += ",\"transition\":true";
+	json += ",\"flash\":false";
+	json += ",\"device\":{\"identifiers\":[\"" + id + "\"],\"name\":\"" + jsonEscape( hostname ) + "\"";
+	json += ",\"manufacturer\":\"Evil Genius Labs (DIY)\",\"model\":\"Psilocybe lamp (ESP8266)\"";
+	json += ",\"sw_version\":\"" VERSION "\"";
+	json += ",\"configuration_url\":\"http://" + WiFi.localIP().toString() + "/\"}";
+	json += "}";
+
+	String topic = discoveryTopic();
+	// streamed, the config is larger than the MQTT buffer
+	mqtt_client.beginPublish( topic.c_str(), json.length(), true );
+	mqtt_client.print( json );
+	mqtt_client.endPublish();
+	Serial.println( "MQTT discovery published (" + String( json.length() ) + " bytes)" );
+}
+
+void removeDiscovery() {
+	if( mqtt_client.connected() ) {
+		String topic = discoveryTopic();
+		mqtt_client.publish( topic.c_str(), "", true );
+	}
+}
+
 void mqtt_callback( char* topic, byte* payload, unsigned int length ) {
 	Serial.print( "Message arrived [" );
 	Serial.print( topic );
@@ -312,26 +524,35 @@ void mqtt_callback( char* topic, byte* payload, unsigned int length ) {
 		Serial.print( (char)payload[i] );
 	}
 	Serial.println();
+
+	if( mqttTopic( "set" ) == topic ) {
+		handleJsonCommand( payload, length );
+		return;
+	}
+
 	int len = mqttPrefix.length() + 4;
+	// payload is not null-terminated
+	String value;
+	value.concat( (const char*)payload, length );
 	// psilocybe/psilo1/CMD/ -> len = 21
 	if( strlen( topic ) > len ) {
 		if( strcmp( topic + len, "power" ) == 0 ) {
 			setPower( strncmp( (char*)payload, "on", length ) == 0 ? 1 : 0 );
 		}
 		if( strcmp( topic + len, "brightness" ) == 0 ) {
-			setBrightness( String( (char*)payload ).toInt() );
+			setBrightness( value.toInt() );
 		}
 		if( strcmp( topic + len, "autoplay" ) == 0 ) {
-			setAutoplay( String( (char*)payload ).toInt() );
+			setAutoplay( value.toInt() );
 		}
 		if( strcmp( topic + len, "pattern" ) == 0 ) {
-			setPattern( String( (char*)payload ).toInt() );
+			setPattern( value.toInt() );
 		}
 		if( strcmp( topic + len, "palette" ) == 0 ) {
-			setPalette( String( (char*)payload ).toInt() );
+			setPalette( value.toInt() );
 		}
 		if( strcmp( topic + len, "autoplayDuration" ) == 0 ) {
-			setAutoplayDuration( String( (char*)payload ).toInt() );
+			setAutoplayDuration( value.toInt() );
 		}
 		if( strcmp( topic + len, "solidcolor" ) == 0 ) {
 			if( payload[0] == '#' && length == 7 ) {
@@ -342,7 +563,7 @@ void mqtt_callback( char* topic, byte* payload, unsigned int length ) {
 			}
 		}
 		if( strcmp( topic + len, "speed" ) == 0 ) {
-			setSpeed( String( (char*)payload ).toInt() );
+			setSpeed( value.toInt() );
 		}
 	}
 }
@@ -364,11 +585,11 @@ void mqtt_reconnect() {
 		Serial.print( "Attempting MQTT connection to '" );
 		Serial.print( mqttServer );
 		Serial.print( "' ... " );
-		// Create a random client ID
-		String clientId = "ESP8266Client-";
-		clientId += String( random( 0xffff ), HEX );
-		// Attempt to connect
-		if( mqtt_client.connect( clientId.c_str() ) ) {
+		String clientId = hostname;
+		String availability = mqttTopic( "availability" );
+		// last will: the broker publishes "offline" when the lamp disappears
+		if( mqtt_client.connect( clientId.c_str(), availability.c_str(), 0, true, "offline" ) ) {
+			mqtt_client.publish( availability.c_str(), "online", true );
 			Serial.println( "connected" );
 			// Once connected, publish an announcement...
 			//  use configured prefix
@@ -384,6 +605,10 @@ void mqtt_reconnect() {
 			Serial.print( topic );
 			Serial.println( "'" );
 			mqtt_client.subscribe( topic );
+			mqtt_client.subscribe( mqttTopic( "set" ).c_str() );
+			if( mqttDiscovery )
+				publishDiscovery();
+			publish_state();
 			mqtt_reconnect_attempts = 0;
 		} else {
 			Serial.print( "failed, rc=" );
@@ -434,6 +659,7 @@ void setup() {
 	loadSettings();
 	// callback always, so commands also work when MQTT gets enabled later via the web UI
 	mqtt_client.setCallback( mqtt_callback );
+	mqtt_client.setBufferSize( MQTT_BUFFER_SIZE );
 	if( mqttEnabled ) {
 		mqtt_client.setServer( mqttServer.c_str(), 1883 );
 	}
@@ -638,6 +864,12 @@ void setup() {
 		sendString( value );
 	} );
 
+	webServer.on( "/mqttDiscovery", HTTP_POST, []() {
+		String value = webServer.arg( "value" );
+		setMqttDiscovery( value.toInt() );
+		sendString( value );
+	} );
+
 	webServer.on( "/mqttEnabled", HTTP_POST, []() {
 		String value = webServer.arg( "value" );
 		setMqttEnabled( value.toInt() == 0 ? 0 : 0xAB );
@@ -752,6 +984,7 @@ String getInfoJson() {
 	json += ",\"freeSketchSpace\":" + String( ESP.getFreeSketchSpace() );
 	json += ",\"core\":\"" + ESP.getCoreVersion() + "\"";
 	json += ",\"mqttEnabled\":" + String( mqttEnabled ? 1 : 0 );
+	json += ",\"mqttDiscovery\":" + String( mqttDiscovery ? 1 : 0 );
 	json += ",\"mqttConnected\":" + String( mqtt_client.connected() ? 1 : 0 );
 	json += ",\"mqttServer\":\"" + jsonEscape( mqttServer ) + "\"";
 	json += ",\"mqttPrefix\":\"" + jsonEscape( mqttPrefix ) + "\"";
@@ -804,7 +1037,9 @@ void loop() {
 	if( mqttEnabled && mqtt_client.connected() )
 		mqtt_client.loop();
 
-	if( power == 0 ) {
+	updateTransitions();
+
+	if( power == 0 && !fadingOut ) {
 		fill_solid( leds, NUM_LEDS, CRGB::Black );
 		FastLED.show();
 		// FastLED.delay(15);
@@ -923,6 +1158,7 @@ void loadSettings() {
 		mqttPrefix = readStringFromEEPROM( EEPROM_MQTT_PREFIX, MQTT_PREFIX_MAX_LEN );
 		mqttEnabled = 1;
 	}
+	mqttDiscovery = EEPROM.read( EEPROM_MQTT_DISCOVERY ) == 0xAB;
 }
 
 String hexstringFromCRGB( CRGB c ) {
@@ -933,21 +1169,31 @@ String hexstringFromCRGB( CRGB c ) {
 
 //{"power":"off", "brightness":99, "autoplay":1, "autoplayDuration":255, "solidColor":"#ff00ff", "pattern":64,
 //"palette":7}
+// contains the Home Assistant JSON schema keys (state, brightness, color_mode, color, effect)
+// plus the original keys (power, solidColor, pattern, ...)
 void publish_state() {
-	if( mqtt_client.connected() && mqttEnabled ) {
-		String json = "{\"power\":\"" + String( power ? "on" : "off" ) + "\", \"brightness\":" + String( brightness ) +
-		              ", \"autoplay\":" + String( autoplay ) + ", \"autoplayDuration\":" + String( autoplayDuration ) +
-		              ", \"solidColor\":\"" + hexstringFromCRGB( solidColor ) + //"\"}";
-		              "\", \"pattern\":" + String( currentPatternIndex ) +
-		              ", \"palette\":" + String( currentPaletteIndex ) + ", \"speed\": " + String( speed ) + "}";
+	if( mqtt_client.connected() && mqttEnabled && !publishSuppressed ) {
+		CRGB c = targetSolidColor();
+		String json = "{\"state\":\"" + String( power ? "ON" : "OFF" ) + "\"";
+		json += ",\"brightness\":" + String( brightness );
+		json += ",\"color_mode\":\"rgb\",\"color\":{\"r\":" + String( c.r ) + ",\"g\":" + String( c.g ) +
+		        ",\"b\":" + String( c.b ) + "}";
+		json += ",\"effect\":\"" + jsonEscape( patterns[currentPatternIndex].name ) + "\"";
+		json += ",\"power\":\"" + String( power ? "on" : "off" ) + "\"";
+		json += ",\"autoplay\":" + String( autoplay ) + ",\"autoplayDuration\":" + String( autoplayDuration );
+		json += ",\"solidColor\":\"" + hexstringFromCRGB( c ) + "\"";
+		json += ",\"pattern\":" + String( currentPatternIndex ) + ",\"palette\":" + String( currentPaletteIndex );
+		json += ",\"speed\":" + String( speed ) + "}";
 		int l = json.length();
 		Serial.println( "MQTT msg: " + json + ", len: " + l );
-		mqtt_client.publish( getTopic( mqttPrefix, "state" ), json.c_str() );
+		mqtt_client.publish( getTopic( mqttPrefix, "state" ), json.c_str(), true );
 	}
 }
 
 void setPower( uint8_t value ) {
 	power = value == 0 ? 0 : 1;
+	if( brightnessFade.active || fadingOut )
+		cancelBrightnessFade();
 
 	EEPROM.write( EEPROM_POWER, power );
 	EEPROM.commit();
@@ -981,6 +1227,7 @@ void setAutoplayDuration( uint8_t value ) {
 void setSolidColor( CRGB color ) { setSolidColor( color.r, color.g, color.b ); }
 
 void setSolidColor( uint8_t r, uint8_t g, uint8_t b ) {
+	colorFade.active = false;
 	solidColor = CRGB( r, g, b );
 
 	EEPROM.write( EEPROM_RED, r );
@@ -1122,6 +1369,18 @@ void setMqttPrefix( String prefix ) {
 	mqttDisconnect();
 }
 
+void setMqttDiscovery( int enabled ) {
+	mqttDiscovery = enabled ? 1 : 0;
+	EEPROM.write( EEPROM_MQTT_DISCOVERY, enabled ? 0xAB : 0 );
+	EEPROM.commit();
+	if( mqtt_client.connected() ) {
+		if( mqttDiscovery )
+			publishDiscovery();
+		else
+			removeDiscovery();
+	}
+}
+
 void setMqttEnabled( int enabled ) {
 	if( enabled && !mqttEnabled ) {
 		mqtt_client.setServer( mqttServer.c_str(), 1883 );
@@ -1142,6 +1401,7 @@ void setBrightness( uint8_t value ) {
 
 	brightness = value;
 
+	brightnessFade.active = false;
 	FastLED.setBrightness( brightness );
 
 	EEPROM.write( EEPROM_BRIGHTNESS, brightness );
