@@ -47,7 +47,7 @@ extern "C" {
 
 #include "Field.h"
 
-#define VERSION "0.5"
+#define VERSION "0.6"
 
 #define STRINGIFY_( x ) #x
 #define STRINGIFY( x ) STRINGIFY_( x )
@@ -96,6 +96,9 @@ String hostname;
 #define EEPROM_MQTT_DISCOVERY 10 // 0xAB = Home Assistant discovery enabled
 #define EEPROM_PALETTE_SETTING 11 // 0 = auto, 1..paletteCount = fixed palette (EEPROM_PALETTE is unused)
 #define EEPROM_NUM_LEDS 12 // 1..NUM_LEDS, anything else = NUM_LEDS
+#define EEPROM_COOLING 13
+#define EEPROM_SPARKING 14
+#define EEPROM_FIRE_VALID 15 // 0xAB = cooling/sparking have been saved
 // server string (length byte + chars) must end before EEPROM_MQTT_PREFIX
 #define MQTT_SERVER_MAX_LEN ( EEPROM_MQTT_PREFIX - EEPROM_MQTT_SERVER - 1 )
 #define MQTT_PREFIX_MAX_LEN 64
@@ -847,16 +850,12 @@ void setup() {
 	} );
 
 	webServer.on( "/cooling", HTTP_POST, []() {
-		String value = webServer.arg( "value" );
-		cooling = value.toInt();
-		broadcastInt( "cooling", cooling );
+		setCooling( webServer.arg( "value" ).toInt() );
 		sendInt( cooling );
 	} );
 
 	webServer.on( "/sparking", HTTP_POST, []() {
-		String value = webServer.arg( "value" );
-		sparking = value.toInt();
-		broadcastInt( "sparking", sparking );
+		setSparking( webServer.arg( "value" ).toInt() );
 		sendInt( sparking );
 	} );
 
@@ -1235,6 +1234,30 @@ void loadSettings() {
 	numLeds = EEPROM.read( EEPROM_NUM_LEDS );
 	if( numLeds < 1 || numLeds > NUM_LEDS )
 		numLeds = NUM_LEDS;
+
+	if( EEPROM.read( EEPROM_FIRE_VALID ) == 0xAB ) {
+		cooling = EEPROM.read( EEPROM_COOLING );
+		sparking = EEPROM.read( EEPROM_SPARKING );
+	}
+}
+
+void saveFireSettings() {
+	EEPROM.write( EEPROM_COOLING, cooling );
+	EEPROM.write( EEPROM_SPARKING, sparking );
+	EEPROM.write( EEPROM_FIRE_VALID, 0xAB );
+	EEPROM.commit();
+}
+
+void setCooling( int value ) {
+	cooling = constrain( value, 0, 255 );
+	saveFireSettings();
+	broadcastInt( "cooling", cooling );
+}
+
+void setSparking( int value ) {
+	sparking = constrain( value, 0, 255 );
+	saveFireSettings();
+	broadcastInt( "sparking", sparking );
 }
 
 // number of LEDs actually connected, takes effect immediately
