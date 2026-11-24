@@ -17,16 +17,14 @@
 */
 
 void drawPolarNoise( CRGBPalette16 palette ) {
-	static unsigned long timer1 = 0;
-	if( millis() > timer1 ) {
-		timer1 = millis() + ( ( 256 - speed ) >> 5 );
+	{
 		for( uint8_t ringIndex = 0; ringIndex < ringCount; ringIndex++ ) { // y
 			uint8_t ringStart = rings[ringIndex][0];
 			uint8_t ringEnd = rings[ringIndex][1];
 
 			for( uint8_t i = ringStart; i <= ringEnd; i++ ) { // x
 				if( i >= NUM_LEDS )
-					return;
+					break;
 
 				// avoid a divide by zero exception
 				uint8_t d = ringEnd - ringStart;
@@ -59,9 +57,7 @@ void drawPolarNoise( CRGBPalette16 palette ) {
 			//    }
 		}
 
-		noisex += noisespeedx;
-		noisey += noisespeedy;
-		noisez += noisespeedz;
+		advanceNoise();
 	}
 }
 

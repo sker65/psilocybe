@@ -79,12 +79,23 @@ void SetupBlackAndBlueStripedPalette() {
 // Additionally, you can manually define your own color palettes, or you can write
 // code that creates color palettes on the fly.
 
-unsigned long noiseTimer = 0;
+// moves through the noise once per frame: speed 32 = the step the pattern sets (noisespeedx/y/z),
+// 255 = ~8x, 1 = 1/32 (the remainder is carried over, so slow speeds still move smoothly)
+void advanceNoise() {
+	static int32_t restX = 0, restY = 0, restZ = 0;
+	restX += noisespeedx * speed;
+	restY += noisespeedy * speed;
+	restZ += noisespeedz * speed;
+	noisex += restX / 32;
+	noisey += restY / 32;
+	noisez += restZ / 32;
+	restX %= 32;
+	restY %= 32;
+	restZ %= 32;
+}
 
 void drawNoise( CRGBPalette16 palette ) {
-	unsigned long now = millis();
-	if( now > noiseTimer ) {
-		noiseTimer = now + ( ( 256 - speed ) >> 5 );
+	{
 		for( uint8_t i = 0; i < NUM_LEDS; i++ ) {
 			uint8_t x = coordsX[i];
 			uint8_t y = coordsY[i];
@@ -103,9 +114,7 @@ void drawNoise( CRGBPalette16 palette ) {
 			leds[i] = ColorFromPalette( palette, data, 255, LINEARBLEND );
 		}
 
-		noisex += noisespeedx;
-		noisey += noisespeedy;
-		noisez += noisespeedz;
+		advanceNoise();
 	}
 }
 

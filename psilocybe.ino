@@ -50,7 +50,7 @@ extern "C" {
 
 #include "Field.h"
 
-#define VERSION "0.7"
+#define VERSION "0.8"
 
 #define STRINGIFY_( x ) #x
 #define STRINGIFY( x ) STRINGIFY_( x )
@@ -109,6 +109,8 @@ String hostname;
 #define EEPROM_FIRE_VALID 15 // 0xAB = cooling/sparking have been saved
 #define EEPROM_DATA_PIN 16 // GPIO number
 #define EEPROM_DATA_PIN_VALID 17 // 0xAB = data pin has been saved
+#define EEPROM_MUSIC_MODE 18 // MusicMode
+#define EEPROM_MUSIC_VALID 19 // 0xAB = music mode has been saved
 // server string (length byte + chars) must end before EEPROM_MQTT_PREFIX
 #define MQTT_SERVER_MAX_LEN ( EEPROM_MQTT_PREFIX - EEPROM_MQTT_SERVER - 1 )
 #define MQTT_PREFIX_MAX_LEN 64
@@ -150,6 +152,9 @@ uint8_t cooling = 49;
 uint8_t sparking = 60;
 
 uint8_t speed = 30;
+// speed setting while an effect is drawn (speed itself may be modulated by the music then), for effects
+// that use speed as beats per minute: a changing bpm makes them jump
+uint8_t baseSpeed = 30;
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -211,6 +216,15 @@ void wifiManagerCallback( WiFiManager* myWiFiManager ) {
 	Serial.println( myWiFiManager->getConfigPortalSSID() );
 }
 
+// how many steps an effect advances in this frame (100 fps): speed / divisor per frame, the remainder is
+// carried over in rest. With a divisor of 32 the default speed 30 makes about one step per frame.
+uint8_t speedSteps( uint16_t& rest, uint8_t divisor ) {
+	rest += speed;
+	uint8_t steps = rest / divisor;
+	rest %= divisor;
+	return steps;
+}
+
 // scale the brightness of all pixels down
 void dimAll( byte value ) {
 	for( int i = 0; i < NUM_LEDS; i++ ) { // all, geometry effects also draw beyond numLeds
@@ -252,6 +266,7 @@ typedef PatternAndName PatternAndNameList[];
 #include "PolarNoise.h"
 #include "TwinkleFOX.h"
 #include "Twinkles.h"
+#include "Music.h"
 // #include "Clock.h"
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
@@ -338,9 +353,22 @@ PatternAndNameList patterns = { { pride, "Pride" },
                                 { fire, "Fire" },
                                 { water, "Water" },
 
-                                { showSolidColor, "Solid Color" } };
+                                { showSolidColor, "Solid Color" },
+
+                                // music reactive (Music Assistant "WLED Audio Sync"), see Music.h.
+                                // After "Solid Color" so the saved index of the older patterns stays the same.
+                                { musicPulse, "Music Pulse" },
+                                { musicSpectrum, "Music Spectrum" },
+                                { musicMeter, "Music Meter" },
+                                { musicRipple, "Music Ripple" },
+                                { musicDjLight, "Music DJ Light" },
+                                { musicAmbient, "Music Ambient" } };
 
 const uint8_t patternCount = ARRAY_SIZE( patterns );
+const uint8_t musicPatternCount = 6;                                         // the last ones in the list
+const uint8_t solidColorPatternIndex = patternCount - musicPatternCount - 1; // "Solid Color"
+
+bool isMusicPattern( uint8_t index ) { return index > solidColorPatternIndex; }
 
 #include "Fields.h"
 
@@ -454,7 +482,7 @@ void handleJsonCommand( byte* payload, unsigned int length ) {
 		JsonObject color = doc["color"];
 		if( !color.isNull() ) {
 			CRGB from = solidColor;
-			bool wasSolid = wasOn && currentPatternIndex == patternCount - 1;
+			bool wasSolid = wasOn && currentPatternIndex == solidColorPatternIndex;
 			CRGB to( color["r"] | 0, color["g"] | 0, color["b"] | 0 );
 			setSolidColor( to );
 			if( ms > 0 && wasSolid )
@@ -502,6 +530,7 @@ const char* const discoveryEntities[][2] = {
     { "switch", "autoplay" },
     { "number", "autoplay_duration" },
     { "select", "palette" },
+    { "select", "music" },
 };
 
 void publishRetained( const String& topic, const String& payload ) {
@@ -591,6 +620,16 @@ void publishDiscovery() {
 	json += "]}";
 	publishRetained( discoveryTopic( "select", "palette" ), json );
 
+	json = discoveryEntityJson( "music", "Music", "mdi:music", "music", "music" );
+	json += ",\"options\":[";
+	for( uint8_t i = 0; i < musicModeCount; i++ ) {
+		if( i > 0 )
+			json += ",";
+		json += "\"" + String( musicModeNames[i] ) + "\"";
+	}
+	json += "]}";
+	publishRetained( discoveryTopic( "select", "music" ), json );
+
 	Serial.println( "MQTT discovery published" );
 }
 
@@ -654,6 +693,9 @@ void mqtt_callback( char* topic, byte* payload, unsigned int length ) {
 		}
 		if( strcmp( topic + len, "speed" ) == 0 ) {
 			setSpeed( value.toInt() );
+		}
+		if( strcmp( topic + len, "music" ) == 0 ) {
+			setMusicModeName( value );
 		}
 	}
 }
@@ -888,6 +930,11 @@ void setup() {
 		sendInt( speed );
 	} );
 
+	webServer.on( "/musicMode", HTTP_POST, []() {
+		setMusicMode( webServer.arg( "value" ).toInt() );
+		sendInt( musicMode );
+	} );
+
 	webServer.on( "/twinkleSpeed", HTTP_POST, []() {
 		String value = webServer.arg( "value" );
 		twinkleSpeed = value.toInt();
@@ -1101,6 +1148,9 @@ String getInfoJson() {
 	json += ",\"sketchSize\":" + String( ESP.getSketchSize() );
 	json += ",\"freeSketchSpace\":" + String( ESP.getFreeSketchSpace() );
 	json += ",\"core\":\"" + ESP.getCoreVersion() + "\"";
+	json += ",\"musicLive\":" + String( musicLive() ? 1 : 0 );
+	json += ",\"musicPackets\":" + String( music.packets );
+	json += ",\"musicBeats\":" + String( music.beats );
 	json += ",\"mqttEnabled\":" + String( mqttEnabled ? 1 : 0 );
 	json += ",\"mqttDiscovery\":" + String( mqttDiscovery ? 1 : 0 );
 	json += ",\"mqttConnected\":" + String( mqtt_client.connected() ? 1 : 0 );
@@ -1132,6 +1182,29 @@ void setSpeed( uint8_t value ) {
 	publish_state();
 }
 
+void setMusicMode( uint8_t value ) {
+	if( value >= musicModeCount )
+		value = MusicOff;
+	musicMode = value;
+	EEPROM.write( EEPROM_MUSIC_MODE, musicMode );
+	EEPROM.write( EEPROM_MUSIC_VALID, 0xAB );
+	EEPROM.commit();
+	broadcastInt( "musicMode", musicMode );
+	publish_state();
+}
+
+// by name ("Off", "Brightness", ...) or index
+void setMusicModeName( const String& name ) {
+	for( uint8_t i = 0; i < musicModeCount; i++ ) {
+		if( name == musicModeNames[i] ) {
+			setMusicMode( i );
+			return;
+		}
+	}
+	if( name.length() && isDigit( name[0] ) )
+		setMusicMode( name.toInt() );
+}
+
 void loop() {
 	ArduinoOTA.handle();
 
@@ -1159,6 +1232,8 @@ void loop() {
 	if( mqttEnabled && mqtt_client.connected() )
 		mqtt_client.loop();
 
+	handleMusicUdp();
+
 	// frame rate limit
 	static unsigned long lastFrame = 0;
 	if( millis() - lastFrame < FRAME_INTERVAL_MS )
@@ -1179,6 +1254,13 @@ void loop() {
 	// }
 
 	unsigned long now = millis();
+
+	// music: beat of this frame; the regular effects may run faster with the music (setting "Music")
+	musicFrame();
+	bool musicEffect = isMusicPattern( currentPatternIndex );
+	baseSpeed = speed;
+	if( !musicEffect )
+		speed = musicModulatedSpeed( baseSpeed );
 
 	// change to a new cpt-city gradient palette secondsPerPalette=10 (fix)
 	// EVERY_N_SECONDS( secondsPerPalette )
@@ -1202,13 +1284,22 @@ void loop() {
 
 	if( autoplay && ( now > autoPlayTimeout ) ) {
 		adjustPattern( true );
+		// without music the music effects stay dark: skip them (Solid Color is right before them)
+		if( !musicLive() && isMusicPattern( currentPatternIndex ) )
+			setPattern( 0 );
 		autoPlayTimeout = now + ( autoplayDuration * 1000 );
 	}
 
 	// Call the current pattern function once, updating the 'leds' array
 	patterns[currentPatternIndex].pattern();
+	speed = baseSpeed;
 
-	FastLED.show();
+	// music: brightness pulses with the beat (setting "Music"), via the output scale, so effects that
+	// build on the previous frame are not affected
+	if( musicEffect )
+		FastLED.show();
+	else
+		FastLED.show( scale8( FastLED.getBrightness(), musicBrightnessScale() ) );
 
 	// insert a delay to keep the framerate modest
 	// FastLED.delay(1000 / FRAMES_PER_SECOND);
@@ -1290,6 +1381,9 @@ void loadSettings() {
 	numLeds = EEPROM.read( EEPROM_NUM_LEDS );
 	if( numLeds < 1 || numLeds > NUM_LEDS )
 		numLeds = NUM_LEDS;
+
+	if( EEPROM.read( EEPROM_MUSIC_VALID ) == 0xAB && EEPROM.read( EEPROM_MUSIC_MODE ) < musicModeCount )
+		musicMode = EEPROM.read( EEPROM_MUSIC_MODE );
 
 	if( EEPROM.read( EEPROM_FIRE_VALID ) == 0xAB ) {
 		cooling = EEPROM.read( EEPROM_COOLING );
@@ -1401,7 +1495,7 @@ void publish_state() {
 		json += ",\"solidColor\":\"" + hexstringFromCRGB( c ) + "\"";
 		json += ",\"pattern\":" + String( currentPatternIndex ) + ",\"palette\":" + String( currentPaletteIndex );
 		json += ",\"paletteName\":\"" + jsonEscape( paletteName( currentPaletteIndex ) ) + "\"";
-		json += ",\"speed\":" + String( speed ) + "}";
+		json += ",\"speed\":" + String( speed ) + ",\"music\":\"" + musicModeNames[musicMode] + "\"}";
 		int l = json.length();
 		Serial.println( "MQTT msg: " + json + ", len: " + l );
 		mqtt_client.publish( getTopic( mqttPrefix, "state" ), json.c_str(), true );
@@ -1453,7 +1547,7 @@ void setSolidColor( uint8_t r, uint8_t g, uint8_t b ) {
 	EEPROM.write( EEPROM_BLUE, b );
 	EEPROM.commit();
 
-	setPattern( patternCount - 1 );
+	setPattern( solidColorPatternIndex );
 
 	broadcastString( "color", String( solidColor.r ) + "," + String( solidColor.g ) + "," + String( solidColor.b ) );
 	publish_state();
@@ -1737,23 +1831,17 @@ void wave() {
 		rotation = random( 0, 4 );
 		// waveCount = random(1, 3);
 	};
-	static unsigned long thetaTimer = 0;
-	if( millis() > thetaTimer ) {
-		thetaTimer = millis() + ( 256 - speed ) >> 5;
-		theta++;
-	}
+	static uint16_t thetaRest = 0;
+	theta += speedSteps( thetaRest, 32 );
 }
 
 void pulse() {
-	static unsigned long timer1 = 0;
-	static unsigned long timer2 = 0;
-	if( millis() > timer1 ) {
-		timer1 = millis() + ( 256 - speed ) >> 5;
+	static uint16_t dimRest = 0;
+	static uint16_t stepRest = 0;
+	for( uint8_t n = speedSteps( dimRest, 32 ); n > 0; n-- )
 		dimAll( 200 );
-	}
 
-	if( millis() > timer2 ) {
-		timer2 = millis() + ( 256 - speed ) >> 4;
+	for( uint8_t n = speedSteps( stepRest, 64 ); n > 0; n-- ) {
 		uint8_t maxSteps = 16;
 		static uint8_t step = maxSteps;
 		static uint8_t centerX = 0;
@@ -1816,7 +1904,7 @@ void confetti() {
 void sinelon() {
 	// a colored dot sweeping back and forth, with fading trails
 	fadeToBlackBy( leds, NUM_LEDS, 20 );
-	int pos = beatsin16( speed, 0, numLeds );
+	int pos = beatsin16( baseSpeed, 0, numLeds );
 	static int prevpos = 0;
 	CRGB color = ColorFromPalette( currentPalette, gHue, 255 );
 	if( pos < prevpos ) {
@@ -1829,7 +1917,7 @@ void sinelon() {
 
 void bpm() {
 	// colored stripes pulsing at a defined Beats-Per-Minute (BPM)
-	uint8_t beat = beatsin8( speed, 64, 255 );
+	uint8_t beat = beatsin8( baseSpeed, 64, 255 );
 	CRGBPalette16 palette = currentPalette;
 	for( int i = 0; i < numLeds; i++ ) {
 		leds[i] = ColorFromPalette( palette, gHue + ( i * 2 ), beat - gHue + ( i * 10 ) );
@@ -1943,6 +2031,13 @@ void pride() {
 // based on FastLED example Fire2012WithPalette:
 // https://github.com/FastLED/FastLED/blob/master/examples/Fire2012WithPalette/Fire2012WithPalette.ino
 void heatMap( CRGBPalette16 palette, bool up ) {
+	// one simulation step every 10 ms (speed 255) .. 95 ms (speed 1), the frame is kept in between
+	static unsigned long lastStep = 0;
+	unsigned long now = millis();
+	if( now - lastStep < 10 + ( 255 - speed ) / 3 )
+		return;
+	lastStep = now;
+
 	fill_solid( leds, NUM_LEDS, CRGB::Black );
 
 	// Add entropy to random number generator; we use a lot of it.
@@ -2082,11 +2177,11 @@ void radialPaletteShift() {
 void radialPaletteShift2() {
 	for( uint8_t i = 0; i < ringCount; i++ ) {
 		for( uint8_t j = rings[i][0]; j <= rings[i][1]; j++ ) {
-			leds[j] = ColorFromPalette( gCurrentPalette, ( i * 4 ) - beat8( speed ) );
+			leds[j] = ColorFromPalette( gCurrentPalette, ( i * 4 ) - beat8( baseSpeed ) );
 		}
 	}
 }
-unsigned long paletteArcsTimer = 0;
+uint16_t paletteArcsRest = 0;
 
 void paletteArcs() {
 	dimAll( 254 );
@@ -2106,22 +2201,17 @@ void paletteArcs() {
 		alternate = !alternate;
 	}
 
-	if( millis() > paletteArcsTimer ) {
-		paletteArcsTimer = millis() + ( 256 - speed ) >> 4;
-		offset++;
-	}
+	offset += speedSteps( paletteArcsRest, 48 );
 }
 
-unsigned long decayingOrbitsTimer = 0;
+uint16_t decayingOrbitsRest = 0;
 
 void decayingOrbits() {
 	dimAll( 240 );
 
 	const uint8_t count = 12;
 	static uint8_t positions[count];
-	unsigned long now = millis();
-	if( now > decayingOrbitsTimer ) {
-		decayingOrbitsTimer = now + ( ( 255 - speed ) >> 5 );
+	for( uint8_t n = speedSteps( decayingOrbitsRest, 32 ); n > 0; n-- ) {
 		for( uint8_t i = 0; i < count; i++ ) {
 			uint8_t pos = positions[i];
 

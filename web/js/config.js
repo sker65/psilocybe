@@ -32,6 +32,8 @@ function renderInfo(d) {
     ["Hostname", d.hostname],
     ["IP / MAC", d.ip + " / " + d.mac],
     ["WiFi", d.ssid + " (" + d.rssi + " dBm)"],
+    ["Music sync", (d.musicLive ? "receiving" : "no music") + " (" + d.musicPackets + " packets, " +
+      d.musicBeats + " beats)"],
     ["Uptime", formatUptime(d.uptime)],
     ["Free heap", formatBytes(d.freeHeap)],
     ["Flash", formatBytes(d.sketchSize) + " used, " + formatBytes(d.freeSketchSpace) + " free for updates (chip " +

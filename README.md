@@ -36,6 +36,7 @@ Firmware is a fork of Jasons initial version https://github.com/evilgeniuslabs/p
 - OTA and browser based firmware updates
 - speed control for almost all effects, palette auto rotation or a fixed palette
 - configurable number of LEDs
+- music reactive effects with Music Assistant (WLED Audio Sync)
 
 Build & flash
 -------------
@@ -84,6 +85,7 @@ Home Assistant (*Settings → Devices & services → MQTT*, named `Psilocybe-<ch
 | Autoplay | switch | cycle through the effects automatically |
 | Autoplay duration | number | seconds per effect when autoplay is on |
 | Palette | select | `Auto` (palettes rotate) or one fixed palette for all palette based effects |
+| Music | select | music drives brightness and/or speed of the regular effects, see *Music* |
 
 If the light was configured in YAML before, remove that entry first, otherwise it shows up twice. Unticking the
 option removes the entities from Home Assistant again. Discovery uses the default prefix `homeassistant/`.
@@ -142,6 +144,28 @@ The fire and twinkle parameters are only available in the web UI. The web UI can
 *Webpage* card: inside an iframe the navigation is hidden automatically (`?embed=1` / `?embed=0` forces it
 off / on). A Home Assistant served via https cannot embed the lamp's plain http page (mixed content).
 
+Music
+-----
+The lamp reacts to music that [Music Assistant](https://music-assistant.io) plays: its plugin *WLED Audio Sync*
+sends the audio analysis as WLED compatible "Audio Sync" packets (UDP multicast `239.0.0.1:11988`, ~40 per
+second), the lamp listens to them automatically. Beats are detected from the bass. *Config → Device → Music sync*
+shows whether packets arrive.
+
+Music effects (at the end of the effect list, colors from the palette setting):
+
+| Effect | |
+|---|---|
+| Music Pulse | the whole lamp in one color, pulses on the beat, the color steps on every beat |
+| Music Spectrum | spectrum from the middle outwards, low frequencies in the middle |
+| Music Meter | level meter from the middle outwards with falling peak dots |
+| Music Ripple | a pool of light at a random place on every beat |
+| Music DJ Light | the color of the music (bass red, mids green, highs blue) travels outwards from the middle |
+| Music Ambient | calm: palette colors drift and swell slowly with loudness and sound, no beats |
+
+The setting *Music* (web UI and Home Assistant select) lets the music drive the regular effects as well:
+`Brightness` (pulses on the beat), `Speed` (louder = faster) or `Brightness + Speed`. Without music the effects
+run normally, and autoplay skips the music effects.
+
 MQTT reference
 --------------
 Topics (all below the configured prefix):
@@ -150,9 +174,10 @@ Topics (all below the configured prefix):
   `{"state":"ON","brightness":200,"color":{"r":255,"g":120,"b":0},"transition":2}`,
   `{"state":"OFF","transition":5}` or `{"effect":"Pride"}`.
 - `state`: JSON state (retained) with the Home Assistant keys `state`, `brightness`, `color_mode`, `color`,
-  `effect` plus `power`, `solidColor`, `pattern`, `palette`, `paletteName`, `speed`, `autoplay`, `autoplayDuration`.
+  `effect` plus `power`, `solidColor`, `pattern`, `palette`, `paletteName`, `speed`, `music`, `autoplay`,
+  `autoplayDuration`.
 - `availability`: `online` / `offline` (retained, last will).
-- `info`: version info on connect, e.g. `{ "clientId": "Psilocybe-xxxxxx", "IP": "x.x.x.x","version":"0.7" }`.
+- `info`: version info on connect, e.g. `{ "clientId": "Psilocybe-xxxxxx", "IP": "x.x.x.x","version":"0.8" }`.
 - `cmd/<action>`: single commands:
   - power: on|off
   - brightness: 0..255
@@ -162,6 +187,7 @@ Topics (all below the configured prefix):
   - paletteName: Auto, Rainbow, Rainbow Stripe, Cloud, Lava, Ocean, Forest, Party, Heat
   - pattern: effect pattern index
   - speed: 1..255
+  - music: Off, Brightness, Speed, Brightness + Speed
   - solidcolor: hexstring for color, format #RRGGBB
 
 Other improvements
@@ -171,5 +197,5 @@ This firmware has some convenience features that were not part of the original f
 - **Firmware update**: over the air with ArduinoOTA (`pio run -e d1_mini_ota -t upload`) or by uploading the
   `.bin` on the *Config* page; firmware and web UI are always updated together
 - **WiFiManager**: if no wifi is configured or wifi not in reach, a self service access point is started, with UI to pick wifi network and enter password
-- **Persistent settings**: brightness, effect, color, palette, autoplay, fire parameters, number of LEDs and the
+- **Persistent settings**: brightness, effect, color, palette, autoplay, fire parameters, music mode, number of LEDs and the
   MQTT settings and the data pin are stored in the EEPROM

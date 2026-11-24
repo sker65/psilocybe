@@ -75,6 +75,18 @@ String getSparking() { return String( sparking ); }
 
 String getSpeed() { return String( speed ); }
 
+String getMusicMode() { return String( musicMode ); }
+
+String getMusicModes() {
+	String json = "";
+	for( uint8_t i = 0; i < musicModeCount; i++ ) {
+		if( i > 0 )
+			json += ",";
+		json += "\"" + String( musicModeNames[i] ) + "\"";
+	}
+	return json;
+}
+
 String getTwinkleSpeed() { return String( twinkleSpeed ); }
 
 String getTwinkleDensity() { return String( twinkleDensity ); }
@@ -85,6 +97,7 @@ FieldList fields = {
     { "pattern", "Pattern", SelectFieldType, 0, patternCount, getPattern, getPatterns },
     { "palette", "Palette", SelectFieldType, 0, paletteCount, getPalette, getPalettes },
     { "speed", "Speed", NumberFieldType, 1, 255, getSpeed },
+    { "musicMode", "Music", SelectFieldType, 0, musicModeCount, getMusicMode, getMusicModes },
     { "autoplay", "Autoplay", SectionFieldType },
     { "autoplay", "Autoplay", BooleanFieldType, 0, 1, getAutoplay },
     { "autoplayDuration", "Autoplay Duration", NumberFieldType, 0, 255, getAutoplayDuration },
